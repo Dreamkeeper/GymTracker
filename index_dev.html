@@ -9,7 +9,7 @@
         body { font-family: Arial, sans-serif; background-color: #f4f4f9; padding: 20px; max-width: 400px; margin: 0 auto; }
         .card { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 20px; }
         input, select, button, textarea { width: 100%; padding: 10px; margin-bottom: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
-        button { background-color: #FF4700; color: white; font-weight: bold; border: none; cursor: pointer; }
+        button { background-color: #FF4700; color: white; font-weight: bold; border: none; cursor: pointer; border-radius: 4px; }
         button:hover { background-color: #e64000; }
         
         .flex-row { display: flex; gap: 10px; }
@@ -39,8 +39,8 @@
         .badge-drop { background-color: #e83e8c; }
         .badge-super { background-color: #007bff; }
         .badge-super-2 { background-color: #17a2b8; } 
-		.badge-warmup { background-color: #ffc107; color: #212529; } /* NEW */
-        .badge-bodyweight { background-color: #28a745; } /* NEW */
+        .badge-warmup { background-color: #ffc107; color: #212529; } 
+        .badge-bodyweight { background-color: #28a745; } 
         
         .superset-link { border-left: 4px solid #007bff; background-color: #f4f9ff; }
         .superset-link-top { border-bottom: none; border-bottom-left-radius: 0; border-bottom-right-radius: 0; margin-bottom: 0; }
@@ -56,6 +56,10 @@
         .tab-content { display: none; animation: fadeIn 0.3s; }
         .tab-content.active { display: block; }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+        /* V6.0 BATCH UI */
+        .batch-btn { background-color: #17a2b8; padding: 12px; font-size: 16px; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); width: 100%; }
+        .batch-btn:hover { background-color: #138496; }
     </style>
 </head>
 <body>
@@ -64,8 +68,8 @@
 
     <div class="tab-container">
         <button class="tab-btn active" onclick="switchTab(event, 'tab-builder')">🏋️ Builder</button>
-        <button class="tab-btn" onclick="switchTab(event, 'tab-progression')">📈 Progression</button>
-		<button class="tab-btn" onclick="switchTab(event, 'tab-history')">📜 History</button>
+        <button class="tab-btn" onclick="switchTab(event, 'tab-batch')">📦 Batch</button>
+        <button class="tab-btn" onclick="switchTab(event, 'tab-history')">📜 History</button>
         <button class="tab-btn" onclick="switchTab(event, 'tab-cloud')">☁️ Cloud Sync</button>
     </div>
 
@@ -76,13 +80,14 @@
                 <button class="secondary-btn" onclick="document.getElementById('importFile').click()">Load (File)</button>
                 <button class="secondary-btn" onclick="exportJSON()">Save (File)</button>
             </div>
+            
             <input type="file" id="importFile" accept=".json" style="display: none;" onchange="importJSON(event)">
             
             <hr style="border: 0; border-top: 1px solid #eee; margin: 15px 0;">
             
             <h4 style="margin-top: 0;">Mobile Import / Export</h4>
 
-			<div id="syncContainer" style="display: none; background: #e8f4f8; padding: 10px; border: 1px solid #b8daff; border-radius: 4px; margin-bottom: 15px;">
+            <div id="syncContainer" style="display: none; background: #e8f4f8; padding: 10px; border: 1px solid #b8daff; border-radius: 4px; margin-bottom: 15px;">
                 <label style="font-size: 12px; font-weight: bold; color: #004085;">📥 Watch Auto-Progression Sync:</label>
                 <div class="flex-row" style="margin-top: 5px;">
                     <select id="syncSelect" style="margin: 0;"></select>
@@ -91,9 +96,8 @@
                 </div>
                 <p style="font-size: 10px; margin: 5px 0 0 0; color: #004085;">Loads updated targets from your last completed watch workout.</p>
             </div>
-			
-            <p style="font-size: 12px; color: gray; margin-top: 0;">If you are inside the Pebble app, use this text box to copy and paste routines instead of using files.</p>
             
+            <p style="font-size: 12px; color: gray; margin-top: 0;">If you are inside the Pebble app, use this text box to copy and paste routines instead of using files.</p>
             <textarea id="routineTextArea" rows="3" style="font-family: monospace; font-size: 11px; resize: vertical;" placeholder='{"n":"My Routine","e":[...]}'></textarea>
             
             <div class="flex-row">
@@ -119,12 +123,11 @@
             <input type="number" id="targetWeight" placeholder="Target Weight in kg (e.g., 60)">
             
             <label style="font-size: 14px; font-weight: bold; margin-top: 5px; display: block;">Advanced Modifier:</label>
-            
             <select id="exerciseModifier" onchange="updateModifierDesc()">
                 <option value="0">Normal Sets</option>
                 <option value="1">Drop Set</option>
                 <option value="2">Superset</option>
-				<option value="3">Warmup</option>
+                <option value="3">Warmup</option>
                 <option value="4">Bodyweight</option>
             </select>
             
@@ -132,9 +135,9 @@
                 Standard exercise execution with regular rest periods.
             </div>
 
-			<label style="font-size: 14px; font-weight: bold; margin-top: 5px; display: block;">Optional Note:</label>
-			<input type="text" id="exerciseComment" placeholder="e.g., Seat at 4, Pin at 3" maxlength="31">
-			
+            <label style="font-size: 14px; font-weight: bold; margin-top: 5px; display: block;">Optional Note:</label>
+            <input type="text" id="exerciseComment" placeholder="e.g., Seat at 4, Pin at 3" maxlength="31">
+            
             <button id="addUpdateBtn" onclick="addExercise()">+ Add to Routine</button>
         </div>
 
@@ -145,9 +148,7 @@
                 <p id="emptyMessage" style="color: gray; font-size: 12px;">No exercises added yet.</p>
             </div>
         </div>
-    </div>
 
-    <div id="tab-progression" class="tab-content">
         <div class="card">
             <h3 style="margin-top: 0;">Progression Settings</h3>
             <label>Mode:</label>
@@ -178,8 +179,27 @@
             </div>
         </div>
     </div>
-	
-	<div id="tab-history" class="tab-content">
+
+    <div id="tab-batch" class="tab-content">
+        <div class="card">
+            <h3 style="margin-top: 0;">Batch Routine Queue</h3>
+            <p style="font-size: 12px; color: gray; margin-top: 0;">Prepare multiple routines in the Builder and add them here to send them to the watch all at once.</p>
+            
+            <button type="button" class="small-btn batch-btn" style="margin-top: 10px; margin-bottom: 15px;" onclick="document.getElementById('batchFile').click()">📂 Load Multiple Files into Batch</button>
+            <input type="file" id="batchFile" accept=".json" multiple style="display: none;" onchange="batchImport(event)">
+
+            <div style="background: #fafafa; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 15px; padding: 10px;">
+                <h4 id="batchCount" style="margin-top: 0; text-align: center; color: #17a2b8;">0 / 7 Routines Prepared</h4>
+                <div id="batchList">
+                    <p style="color: gray; font-size: 12px; text-align: center;">No routines in the batch yet. Build a routine and click "Add to Batch".</p>
+                </div>
+            </div>
+
+            <button onclick="sendBatchToPebble()" style="padding: 15px; font-size: 18px; width: 100%; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">🚀 Send Entire Batch to Watch</button>
+        </div>
+    </div>
+    
+    <div id="tab-history" class="tab-content">
         <div class="card">
             <h3 style="margin-top: 0;">Workout History</h3>
             <p style="font-size: 12px; color: gray; margin-top: 0;">Workouts are saved locally to your phone. Download them here.</p>
@@ -213,7 +233,10 @@
         </div>
     </div>
 
-    <button onclick="saveAndSend()" style="padding: 15px; font-size: 18px; margin-bottom: 40px; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">Save & Send to Pebble</button>
+    <div style="margin-bottom: 40px;">
+        <button id="btn-add-batch" class="batch-btn" onclick="addToBatch()">📦 + Add Current Routine to Batch</button>
+        <button id="btn-send-single" onclick="saveAndSendSingle()" style="padding: 15px; font-size: 18px; width: 100%; box-shadow: 0 4px 6px rgba(0,0,0,0.2);">Save & Send Single Routine to Pebble</button>
+    </div>
 
     <script>
         const exerciseDatabase = {
@@ -226,27 +249,46 @@
         };
 
         let myRoutine = [];
+        let batchRoutines = []; // V6.0: Array to hold batch routines
         let editingIndex = -1;
         let draggedIndex = null;
         let workoutHistory = [];
         let shouldClearHistory = false;
         let shouldClearGoogle = false; 
 
-        // V5.0 TAB LOGIC
+        // V6.0 FIX: Dynamically show/hide the global buttons based on the active tab
         function switchTab(evt, tabId) {
             let i, tabcontent, tablinks;
+            
             tabcontent = document.getElementsByClassName("tab-content");
             for (i = 0; i < tabcontent.length; i++) {
                 tabcontent[i].style.display = "none";
                 tabcontent[i].classList.remove("active");
             }
+            
             tablinks = document.getElementsByClassName("tab-btn");
             for (i = 0; i < tablinks.length; i++) {
                 tablinks[i].classList.remove("active");
             }
+            
             document.getElementById(tabId).style.display = "block";
             document.getElementById(tabId).classList.add("active");
             evt.currentTarget.classList.add("active");
+
+            // Button Visibility Logic
+            const btnAddBatch = document.getElementById("btn-add-batch");
+            const btnSendSingle = document.getElementById("btn-send-single");
+
+            if (tabId === 'tab-builder') {
+                btnAddBatch.style.display = "block";
+                btnSendSingle.style.display = "block";
+            } else if (tabId === 'tab-batch') {
+                btnAddBatch.style.display = "none";
+                btnSendSingle.style.display = "none";
+            } else {
+                btnAddBatch.style.display = "none";
+                btnSendSingle.style.display = "block"; // Keep visible on History/Cloud to push settings
+            }
         }
 
         function getQueryParam(variable, defaultValue) {
@@ -267,21 +309,22 @@
             if (mode === "0") {
                 container.style.display = "block";
                 desc.innerHTML = "<strong>Weight Progression:</strong> Automatically increases your target weight for the next workout if you complete all sets and reps successfully.";
-                desc.style.borderLeftColor = "#28a745"; // Green accent
+                desc.style.borderLeftColor = "#28a745"; 
             } else if (mode === "1") {
                 container.style.display = "none";
                 desc.innerHTML = "<strong>Reps Progression:</strong> Automatically increases your target reps by 1 for the next workout if you complete all sets and reps successfully.";
-                desc.style.borderLeftColor = "#17a2b8"; // Blue accent
+                desc.style.borderLeftColor = "#17a2b8"; 
             } else {
                 container.style.display = "none";
                 desc.innerHTML = "Progression is disabled. Your targets will remain exactly as you set them.";
-                desc.style.borderLeftColor = "#ccc"; // Gray outline
+                desc.style.borderLeftColor = "#ccc"; 
             }
         }
 
         function updateModifierDesc() {
             const val = document.getElementById("exerciseModifier").value;
             const desc = document.getElementById("modifierDesc");
+            const weightInput = document.getElementById("targetWeight");
             
             if (val === "0") {
                 desc.innerHTML = "Standard exercise execution with regular rest periods.";
@@ -294,24 +337,18 @@
                 desc.style.borderLeftColor = "#007bff"; 
             } else if (val === "3") {
                 desc.innerHTML = "<strong>Warmup:</strong> Executes as normal, but the watch will automatically cut your configured rest timer in half between sets.";
-                desc.style.borderLeftColor = "#ffc107"; // Yellow
+                desc.style.borderLeftColor = "#ffc107"; 
             } else if (val === "4") {
                 desc.innerHTML = "<strong>Bodyweight:</strong> Disables weight tracking on the watch so you can focus entirely on your reps.";
-                desc.style.borderLeftColor = "#28a745"; // Green
+                desc.style.borderLeftColor = "#28a745"; 
             }
-			const weightInput = document.getElementById("targetWeight");
             
             if (val === "4") {
-                desc.innerHTML = "<strong>Bodyweight:</strong> Disables weight tracking on the watch so you can focus entirely on your reps.";
-                desc.style.borderLeftColor = "#28a745"; // Green
-                
-                // UX FIX: Grey out the weight input
                 weightInput.disabled = true;
                 weightInput.value = "";
                 weightInput.placeholder = "Bodyweight (No weight needed)";
                 weightInput.style.backgroundColor = "#e9ecef";
             } else {
-                // Restore the input for all other modifiers
                 weightInput.disabled = false;
                 weightInput.placeholder = "Target Weight in kg (e.g., 60)";
                 weightInput.style.backgroundColor = "";
@@ -366,6 +403,10 @@
             updateModifierDesc(); 
             updateProgressionUI();
             
+            // Set initial button visibility explicitly
+            document.getElementById("btn-add-batch").style.display = "block";
+            document.getElementById("btn-send-single").style.display = "block";
+            
             const storedUrl = getQueryParam('googleUrl', '');
             if (storedUrl && storedUrl.trim() !== '') {
                 document.getElementById('googleStatusContainer').style.display = 'block';
@@ -375,7 +416,6 @@
             try { workoutHistory = JSON.parse(historyStr); } catch(e) { workoutHistory = []; }
             renderHistory();
 
-            // V5.0 TWO-WAY SYNC INIT
             const syncStr = getQueryParam('sync', '{}');
             try { 
                 syncedRoutinesDict = JSON.parse(syncStr); 
@@ -399,7 +439,7 @@
                 document.getElementById('googleStatusContainer').style.display = 'none';
                 document.getElementById('googleUrlInput').value = '';
                 document.getElementById('googlePwdInput').value = '';
-                alert("Credentials will be permanently wiped when you click 'Save & Send to Pebble'.");
+                alert("Credentials will be permanently wiped when you sync next.");
             }
         }
 
@@ -422,7 +462,6 @@
         function downloadCSV() {
             if (workoutHistory.length === 0) { alert("No history to download!"); return; }
             
-            // V4.0 UPDATE: Added new columns to the CSV header
             let csvContent = "Date,Routine,Duration (s),Mood,Accuracy (%),Density,Peak HR,Avg HR,Exercise,Set,Reps,Weight\n";
             
             workoutHistory.forEach(entry => {
@@ -561,7 +600,7 @@
                 if (modifier === 2) badgeHTML += '<span class="mod-badge badge-super">SUPER 1/2</span> ';
                 if (isSecondHalf) badgeHTML += '<span class="mod-badge badge-super-2">SUPER 2/2</span> ';
                 if (modifier === 1) badgeHTML += '<span class="mod-badge badge-drop">DROP SET</span> ';
-				if (modifier === 3) badgeHTML += '<span class="mod-badge badge-warmup">WARMUP</span> ';
+                if (modifier === 3) badgeHTML += '<span class="mod-badge badge-warmup">WARMUP</span> ';
                 if (modifier === 4) badgeHTML += '<span class="mod-badge badge-bodyweight">BODYWEIGHT</span> ';
 
                 let div = document.createElement("div");
@@ -585,13 +624,14 @@
                 let handle = `<div class="grab-handle">≡</div>`;
                 if (isSecondHalf) handle = `<div class="grab-handle" style="color:#007bff; margin-left:8px;">↳</div>`;
 
-				let commentHTML = (ex.length > 5 && ex[5] !== "") ? `<div style="font-size: 11px; color: #888; margin-top: 2px;">📝 ${ex[5]}</div>` : "";
+                let commentHTML = (ex.length > 5 && ex[5] !== "") ? `<div style="font-size: 11px; color: #888; margin-top: 2px;">📝 ${ex[5]}</div>` : "";
                 
                 info.innerHTML = `
                     ${handle}
                     <div class="exercise-details">
                         <div style="line-height: 1.2; margin-bottom: 4px;"><strong>${ex[0]}</strong> ${badgeHTML}</div>
                         <div>${ex[1]}s x ${ex[2]}r @ ${ex[3]}kg</div>
+                        ${commentHTML}
                     </div>
                 `;
                 
@@ -634,18 +674,13 @@
             const sets = document.getElementById("targetSets").value;
             const reps = document.getElementById("targetReps").value;
             
-            // UX FIX 1: Changed 'const' to 'let' so we can dynamically overwrite it!
             let weight = document.getElementById("targetWeight").value;
             const modifier = document.getElementById("exerciseModifier").value;
             
-            // Safely grab the comment if the field exists
             const commentField = document.getElementById("exerciseComment");
             const comment = commentField ? commentField.value.trim() : "";
 
-            // UX FIX 2: Automatically set weight to "0" to bypass validation for Bodyweight
-            if (modifier === "4") {
-                weight = "0";
-            }
+            if (modifier === "4") { weight = "0"; }
 
             if(sets === "" || reps === "" || weight === "") { 
                 alert("Please fill out sets, reps, and weight!"); 
@@ -664,7 +699,6 @@
             
             renderRoutine(); 
             
-            // Reset the form fields
             document.getElementById("exerciseSearch").value = "";
             renderExerciseDropdown();
             document.getElementById("targetSets").value = "";
@@ -673,7 +707,6 @@
             document.getElementById("exerciseModifier").value = "0"; 
             if (commentField) commentField.value = "";
             
-            // Reset the description and re-enable the weight box
             updateModifierDesc(); 
         }
 
@@ -688,18 +721,15 @@
             document.getElementById("targetReps").value = ex[2];
             document.getElementById("targetWeight").value = ex[3];
             document.getElementById("exerciseModifier").value = ex.length > 4 ? ex[4] : "0";
-			document.getElementById("exerciseComment").value = ex.length > 5 ? ex[5] : "";
+            document.getElementById("exerciseComment").value = ex.length > 5 ? ex[5] : "";
             updateModifierDesc(); 
 
             editingIndex = index;
             document.getElementById("formTitle").innerText = "Edit Exercise";
             document.getElementById("addUpdateBtn").innerText = "Update Exercise";
             
-            // Switch back to Builder tab to show the edit form
-        	document.querySelector('.tab-btn[onclick*="tab-builder"]').click();
-        
-        	// V5.0 UX FIX: Smooth scroll directly to the input form!
-        	document.getElementById("formTitle").scrollIntoView({ behavior: 'smooth', block: 'start' });
+            document.querySelector('.tab-btn[onclick*="tab-builder"]').click();
+            document.getElementById("formTitle").scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
         function exportJSON() {
@@ -714,7 +744,7 @@
 
             const routineName = document.getElementById("routineName").value || "My_Routine";
             const v2Routine = myRoutine.map(ex => {
-                return [ex[0], ex[1], ex[2], ex[3], ex.length > 4 ? ex[4] : 0];
+                return [ex[0], ex[1], ex[2], ex[3], ex.length > 4 ? ex[4] : 0, ex.length > 5 ? ex[5] : ""];
             });
             const finalData = { n: routineName, e: v2Routine };
             const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(finalData));
@@ -748,12 +778,149 @@
             reader.readAsText(file);
         }
 
-        function saveAndSend() {
+        // ==========================================
+        // V6.0: BATCH LOGIC
+        // ==========================================
+        
+        function addToBatch() {
+            if (batchRoutines.length >= 7) {
+                alert("Batch is full! You can only queue up to 7 routines at once.");
+                return;
+            }
+            if (myRoutine.length === 0) {
+                alert("Please add at least one exercise to the routine before adding to the batch.");
+                return;
+            }
+            
+            let lastEx = myRoutine[myRoutine.length - 1];
+            let lastMod = lastEx.length > 4 ? parseInt(lastEx[4]) : 0;
+            if (lastMod === 2) {
+                alert("Add failed: The last exercise is marked as a Superset, but there is no exercise below it to pair with!");
+                return;
+            }
+
+            const routineName = document.getElementById("routineName").value || "Routine " + (batchRoutines.length + 1);
+            
+            let delimitedString = routineName;
+            for (let i = 0; i < myRoutine.length; i++) {
+                let ex = myRoutine[i]; 
+                let mod = ex.length > 4 ? ex[4] : 0;
+                let cmt = (ex.length > 5 && ex[5].trim() !== "") ? ex[5].trim() : "-"; 
+                delimitedString += "|" + ex[0] + "|" + ex[1] + "|" + ex[2] + "|" + ex[3] + "|" + mod + "|" + cmt;
+            }
+
+            if (delimitedString.length > 1000) {
+                alert("⚠️ Routine Too Long!\nPlease abbreviate some exercise names in '" + routineName + "' and try again.");
+                return; 
+            }
+
+            batchRoutines.push({ name: routineName, dataStr: delimitedString });
+            
+            myRoutine = [];
+            document.getElementById("routineName").value = "";
+            renderRoutine();
+            renderBatchUI();
+            
+            alert("✅ '" + routineName + "' added to batch! (" + batchRoutines.length + "/7)");
+        }
+
+        function renderBatchUI() {
+            const listDiv = document.getElementById("batchList");
+            const countText = document.getElementById("batchCount");
+            
+            countText.innerText = batchRoutines.length + " / 7 Routines Prepared";
+            
+            if (batchRoutines.length === 0) {
+                listDiv.innerHTML = '<p style="color: gray; font-size: 12px; text-align: center;">No routines in the batch yet. Build a routine and click "Add to Batch".</p>';
+                return;
+            }
+            
+            listDiv.innerHTML = "";
+            batchRoutines.forEach((r, index) => {
+                listDiv.innerHTML += `
+                    <div class="exercise-item">
+                        <strong>${r.name}</strong>
+                        <button class="small-btn delete-btn" onclick="removeFromBatch(${index})">X</button>
+                    </div>
+                `;
+            });
+        }
+
+        function removeFromBatch(index) {
+            batchRoutines.splice(index, 1);
+            renderBatchUI();
+        }
+
+        function batchImport(event) {
+            const files = event.target.files;
+            if (!files || files.length === 0) return;
+            
+            if (batchRoutines.length + files.length > 7) {
+                alert("Whoops! Your watch can only hold 7 routines max. You are trying to add too many files.");
+                event.target.value = '';
+                return;
+            }
+
+            for (let i = 0; i < files.length; i++) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    try {
+                        const importedData = JSON.parse(e.target.result);
+                        if (importedData.n !== undefined && Array.isArray(importedData.e)) {
+                            
+                            let rString = importedData.n;
+                            importedData.e.forEach(ex => {
+                                let mod = ex.length > 4 ? ex[4] : 0;
+                                let cmt = (ex.length > 5 && ex[5].trim() !== "") ? ex[5].trim() : "-";
+                                rString += "|" + ex[0] + "|" + ex[1] + "|" + ex[2] + "|" + ex[3] + "|" + mod + "|" + cmt;
+                            });
+                            
+                            batchRoutines.push({ name: importedData.n, dataStr: rString });
+                            renderBatchUI();
+                            
+                        } else {
+                            alert("File '" + files[i].name + "' is invalid and was skipped.");
+                        }
+                    } catch (err) {
+                        alert("Error reading file: " + files[i].name);
+                    }
+                };
+                reader.readAsText(files[i]);
+            }
+            
+            event.target.value = '';
+        }
+
+        function sendBatchToPebble() {
+            if (batchRoutines.length === 0) {
+                alert("Your batch is empty! Add routines from the Builder first.");
+                return;
+            }
+            
+            let dataArray = batchRoutines.map(r => r.dataStr);
+            let finalBatchString = "BATCH~" + dataArray.join("~");
+
+            const configData = {
+                routineData: finalBatchString,
+                progressionMode: document.getElementById("progressionMode").value,
+                weightIncrement: document.getElementById("weightIncrement").value,
+                googleUrl: document.getElementById("googleUrlInput").value,
+                googlePwd: document.getElementById("googlePwdInput").value,
+                clearHistory: shouldClearHistory,
+                clearGoogle: shouldClearGoogle,
+                updatedSync: syncedRoutinesDict
+            };
+
+            var returnTo = getQueryParam('return_to', 'pebblejs://close#');
+            window.location.href = returnTo + encodeURIComponent(JSON.stringify(configData));
+        }
+
+        function saveAndSendSingle() {
             if (myRoutine.length > 0) {
                 let lastEx = myRoutine[myRoutine.length - 1];
                 let lastMod = lastEx.length > 4 ? parseInt(lastEx[4]) : 0;
                 if (lastMod === 2) {
-                    alert("Send failed: The last exercise in your routine is marked as a Superset, but there is no exercise below it to pair with! Please edit it.");
+                    alert("Send failed: The last exercise is marked as a Superset, but there is no exercise below it to pair with!");
                     return;
                 }
             }
@@ -772,15 +939,13 @@
               for (let i = 0; i < myRoutine.length; i++) {
                   let ex = myRoutine[i]; 
                   let mod = ex.length > 4 ? ex[4] : 0;
-                  let cmt = (ex.length > 5 && ex[5].trim() !== "") ? ex[5].trim() : "-"; // Safety dash
-                  
-                  // Added the comment to the Bluetooth payload!
+                  let cmt = (ex.length > 5 && ex[5].trim() !== "") ? ex[5].trim() : "-"; 
                   delimitedString += "|" + ex[0] + "|" + ex[1] + "|" + ex[2] + "|" + ex[3] + "|" + mod + "|" + cmt;
               }
             }
 
             if (delimitedString.length > 1000) {
-                alert("⚠️ Routine Too Long!\n\nYour routine is " + delimitedString.length + " characters, but the watch can only store 255. \n\nPlease abbreviate some exercise names (e.g. 'DB Bench' instead of 'Dumbbell Bench Press') and try again.");
+                alert("⚠️ Routine Too Long!\nPlease abbreviate some exercise names and try again.");
                 return; 
             }
 
@@ -792,14 +957,14 @@
                 googlePwd: document.getElementById("googlePwdInput").value,
                 clearHistory: shouldClearHistory,
                 clearGoogle: shouldClearGoogle,
-				updatedSync: syncedRoutinesDict
+                updatedSync: syncedRoutinesDict
             };
 
             var returnTo = getQueryParam('return_to', 'pebblejs://close#');
             window.location.href = returnTo + encodeURIComponent(JSON.stringify(configData));
         }
 
-		let syncedRoutinesDict = {};
+        let syncedRoutinesDict = {};
 
         function loadSyncedRoutine() {
             const selectedName = document.getElementById("syncSelect").value;
@@ -811,18 +976,15 @@
             
             let startIndex = 1;
             
-            // V5.0 UX FIX: Check if the string contains the new Progression Settings
-            // (If the second item is -1, 0, or 1, we know it's the Progression Mode!)
             if (parts[1] === "-1" || parts[1] === "0" || parts[1] === "1") {
                 document.getElementById("progressionMode").value = parts[1];
                 document.getElementById("weightIncrement").value = parts[2];
-                updateProgressionUI(); // Update the green/blue info box automatically
-                startIndex = 3; // Shift the loop start index past the new data
+                updateProgressionUI(); 
+                startIndex = 3; 
             }
 
             myRoutine = [];
             
-            // Loop through the delimited string (6 fields per exercise)
             for (let i = startIndex; i < parts.length; i += 6) {
                 if(parts[i]) {
                     let name = parts[i];
@@ -837,25 +999,18 @@
             }
             renderRoutine();
             
-            // Switch back to the Builder tab so they can see the loaded routine
             document.querySelector('.tab-btn[onclick*="tab-builder"]').click();
             alert("✅ Auto-Progressed routine targets successfully loaded from watch!");
         }
 
-		function deleteSyncedRoutine() {
+        function deleteSyncedRoutine() {
             const syncDropdown = document.getElementById("syncSelect");
             if (syncDropdown.options.length === 0) return;
             
             const selectedName = syncDropdown.value;
             if (confirm("Remove '" + selectedName + "' from your synced auto-progression list?")) {
-                
-                // 1. Remove it from our local dictionary
                 delete syncedRoutinesDict[selectedName];
-                
-                // 2. Remove it from the visual dropdown
                 syncDropdown.remove(syncDropdown.selectedIndex);
-                
-                // 3. Hide the whole box if that was the last one!
                 if (syncDropdown.options.length === 0) {
                     document.getElementById('syncContainer').style.display = 'none';
                 }
