@@ -10,6 +10,7 @@
 #define ACTIVE_EX_BASE 400
 #define ROUTINE_EX_BASE 1000 
 #define V5_MIGRATION_KEY 500 
+#define GHOST_KEY_BASE 800
 
 typedef struct {
   char name[32];
@@ -58,6 +59,7 @@ static bool s_is_paused = false;
 static int s_peak_hr = 0;
 static int s_total_hr = 0;
 static int s_hr_samples = 0;
+static int s_last_workout_sec = 0;
 
 // --- USER SETTINGS ---
 static int s_set_rest_sec = 60; 
@@ -76,6 +78,7 @@ static int s_dark_mode = 0;
 static int s_shortcut_up = 1; 
 static int s_shortcut_down = 2; 
 static int s_shortcut_select = 4;
+static int s_dynamic_hr_target = 0; 
 
 // --- THEME HELPERS ---
 static bool is_dark_theme() {
@@ -130,7 +133,7 @@ static MenuLayer *s_inspector_menu_layer;
 static Window *s_mega_window;
 static SimpleMenuLayer *s_mega_menu_layer;
 static SimpleMenuSection s_mega_menu_sections[1];
-static SimpleMenuItem s_mega_menu_items[6];
+static SimpleMenuItem s_mega_menu_items[7];
 
 static Window *s_note_window;
 static TextLayer *s_note_text_layer;
@@ -149,6 +152,8 @@ static int s_slot_to_edit = -1;
 static int s_target_swap_slot = -1; 
 static bool s_is_resting = false;
 static int s_rest_seconds_remaining = 0;
+
+static DictationSession *s_dictation_session = NULL; 
 
 // --- FORWARD DECLARATIONS FOR LAZY LOADING ---
 static void update_workout_ui(bool animate_box);
@@ -228,6 +233,7 @@ static void load_settings() {
   if(persist_exists(SETTINGS_KEY_BASE + 15)) s_shortcut_up = persist_read_int(SETTINGS_KEY_BASE + 15);
   if(persist_exists(SETTINGS_KEY_BASE + 16)) s_shortcut_down = persist_read_int(SETTINGS_KEY_BASE + 16);
   if(persist_exists(SETTINGS_KEY_BASE + 17)) s_shortcut_select = persist_read_int(SETTINGS_KEY_BASE + 17);
+  if(persist_exists(SETTINGS_KEY_BASE + 18)) s_dynamic_hr_target = persist_read_int(SETTINGS_KEY_BASE + 18); 
 }
 
 static void save_setting(int key_offset, int value) {
@@ -376,7 +382,7 @@ static uint16_t settings_get_num_sections_callback(MenuLayer *menu_layer, void *
 }
 
 static uint16_t settings_get_num_rows_callback(MenuLayer *menu_layer, uint16_t section_index, void *data) { 
-  if (section_index == 0) return 4; 
+  if (section_index == 0) return 5; 
   if (section_index == 1) return 3; 
   if (section_index == 2) return 1; 
   if (section_index == 3) return 4; 
@@ -410,6 +416,10 @@ static void settings_draw_row_callback(GContext* ctx, const Layer *cell_layer, M
       case 1: snprintf(title, sizeof(title), "Ex. Rest"); snprintf(subtitle, sizeof(subtitle), "%ds", s_ex_rest_sec); break;
       case 2: snprintf(title, sizeof(title), "Super Rest"); snprintf(subtitle, sizeof(subtitle), "%ds", s_super_rest_sec); break;
       case 3: snprintf(title, sizeof(title), "Drop Rest"); snprintf(subtitle, sizeof(subtitle), "%ds", s_drop_rest_sec); break;
+      case 4: snprintf(title, sizeof(title), "Dynamic Rest"); 
+              if(s_dynamic_hr_target == 0) snprintf(subtitle, sizeof(subtitle), "Off (Timer Only)");
+              else snprintf(subtitle, sizeof(subtitle), "Resume @ %d BPM", s_dynamic_hr_target);
+              break;
     }
   } else if (cell_index->section == 1) { 
     switch(cell_index->row) {
@@ -438,7 +448,7 @@ static void settings_draw_row_callback(GContext* ctx, const Layer *cell_layer, M
         break;
     }
   } else if (cell_index->section == 4) { 
-    static const char* actions[] = {"Variations", "View Note", "Swap (Later)", "Skip Entirely", "Finish Set", "Skip Set"};
+    static const char* actions[] = {"Variations", "View Note", "Swap (Later)", "Skip Entirely", "Finish Set", "Skip Set", "Voice Note"};
     switch(cell_index->row) {
       case 0: snprintf(title, sizeof(title), "Up Long Press"); snprintf(subtitle, sizeof(subtitle), "%s", actions[s_shortcut_up]); break;
       case 1: snprintf(title, sizeof(title), "Down Long Press"); snprintf(subtitle, sizeof(subtitle), "%s", actions[s_shortcut_down]); break;
@@ -455,6 +465,7 @@ static void settings_select_callback(MenuLayer *menu_layer, MenuIndex *cell_inde
       case 1: s_ex_rest_sec += 30; if(s_ex_rest_sec > 240) s_ex_rest_sec = 0; save_setting(1, s_ex_rest_sec); break;
       case 2: s_super_rest_sec += 5; if(s_super_rest_sec > 30) s_super_rest_sec = 0; save_setting(9, s_super_rest_sec); break;
       case 3: s_drop_rest_sec += 5; if(s_drop_rest_sec > 30) s_drop_rest_sec = 5; save_setting(12, s_drop_rest_sec); break; 
+      case 4: s_dynamic_hr_target += 5; if(s_dynamic_hr_target > 160) s_dynamic_hr_target = 0; if(s_dynamic_hr_target > 0 && s_dynamic_hr_target < 90) s_dynamic_hr_target = 90; save_setting(18, s_dynamic_hr_target); break;
     }
   } else if (cell_index->section == 1) { 
     switch(cell_index->row) {
@@ -488,9 +499,9 @@ static void settings_select_callback(MenuLayer *menu_layer, MenuIndex *cell_inde
     }
   } else if (cell_index->section == 4) { 
     switch(cell_index->row) {
-      case 0: s_shortcut_up++; if(s_shortcut_up > 5) s_shortcut_up = 0; save_setting(15, s_shortcut_up); break;
-      case 1: s_shortcut_down++; if(s_shortcut_down > 5) s_shortcut_down = 0; save_setting(16, s_shortcut_down); break;
-      case 2: s_shortcut_select++; if(s_shortcut_select > 5) s_shortcut_select = 0; save_setting(17, s_shortcut_select); break;
+      case 0: s_shortcut_up++; if(s_shortcut_up > 6) s_shortcut_up = 0; save_setting(15, s_shortcut_up); break;
+      case 1: s_shortcut_down++; if(s_shortcut_down > 6) s_shortcut_down = 0; save_setting(16, s_shortcut_down); break;
+      case 2: s_shortcut_select++; if(s_shortcut_select > 6) s_shortcut_select = 0; save_setting(17, s_shortcut_select); break;
     }
   }
   menu_layer_reload_data(s_settings_menu_layer);
@@ -772,6 +783,10 @@ static void summary_window_load(Window *window) {
   s_last_routine_slot = s_current_slot;
   persist_write_int(SETTINGS_KEY_BASE + 13, s_last_routine_slot);
   
+  if (s_workout_sec > 0) {
+      persist_write_int(GHOST_KEY_BASE + s_current_slot, s_workout_sec);
+  }
+  
   Layer *w_layer = window_get_root_layer(window);
   GRect bounds = layer_get_bounds(w_layer);
   
@@ -783,11 +798,11 @@ static void summary_window_load(Window *window) {
     int y_info = (bounds.size.h * 78) / 100; 
   #else
     bool is_tall = (bounds.size.h > 180);
-    int y_title = is_tall ? 15 : 5;
-    int y_top = is_tall ? 80 : 50;
+    int y_title = is_tall ? 15 : 2;
+    int y_top = is_tall ? 80 : 46;
     int box_h = is_tall ? 42 : 36; 
     int y_bot = y_top + box_h + 4;
-    int y_info = is_tall ? 190 : 136; 
+    int y_info = is_tall ? 190 : 126; 
   #endif
 
   int box_w = (bounds.size.w / 2) - 15;
@@ -811,7 +826,7 @@ static void summary_window_load(Window *window) {
   text_layer_set_text_color(s_accuracy_layer, grid_text_color);
   text_layer_set_text_color(s_density_layer, grid_text_color);
   
-  s_sum_info_layer = build_text_layer(GRect(0, y_info, bounds.size.w, 40), FONT_KEY_GOTHIC_14, get_text_color(), GTextAlignmentCenter, w_layer);
+  s_sum_info_layer = build_text_layer(GRect(0, y_info, bounds.size.w, bounds.size.h - y_info), FONT_KEY_GOTHIC_14, get_text_color(), GTextAlignmentCenter, w_layer);
 
   tick_timer_service_unsubscribe();
   int m = s_workout_sec / 60;
@@ -854,6 +869,31 @@ static void summary_window_load(Window *window) {
 
   int accuracy = (total_target_reps > 0) ? ((total_actual_reps * 100) / total_target_reps) : 0;
   int density = (s_workout_sec > 0) ? ((total_volume * 60) / s_workout_sec) : 0;
+  
+  // V6.0 NEW: Milestone & Bodyweight Celebration Logic!
+  static char celebration_buf[80]; // Increased to 80 to ensure text fits safely
+  
+  if (total_volume > 0) {
+      int norm_v = (s_weight_unit_idx == 1) ? (total_volume * 45 / 100) : total_volume; // Normalize lbs to kg
+      const char *milestone = "Great session!";
+      if (norm_v >= 10000) milestone = "You lifted a Jet plane!";
+      else if (norm_v >= 5000) milestone = "You lifted an Elephant!";
+      else if (norm_v >= 2000) milestone = "You lifted a Rhino!";
+      else if (norm_v >= 1000) milestone = "You lifted a Great White!";
+      else if (norm_v >= 500)  milestone = "You lifted a Grizzly Bear!";
+      else if (norm_v >= 250)  milestone = "You lifted a Motorcycle!";
+      else if (norm_v >= 100)  milestone = "You lifted a Giant Panda!";
+    
+      snprintf(celebration_buf, sizeof(celebration_buf), "Synced! %s\nTotal Tonnage: %d %s", milestone, total_volume, s_weight_unit_idx == 0 ? "kg" : "lbs");
+      
+  } else if (total_actual_reps > 0) {
+      // V6.0 FIX: Pure Bodyweight Workout Celebration!
+      snprintf(celebration_buf, sizeof(celebration_buf), "Synced! Gravity defeated.\nBody moved %d times!", total_actual_reps);
+      
+  } else {
+      // User skipped every single set
+      snprintf(celebration_buf, sizeof(celebration_buf), "Data synced!\nPress any button.");
+  }
 
   static char beat_buf[16], missed_buf[16], acc_buf[16], den_buf[16];
   snprintf(beat_buf, sizeof(beat_buf), "Beat\n%d", sets_above);
@@ -929,7 +969,7 @@ static void summary_window_load(Window *window) {
           dict_write_cstring(iter, MESSAGE_KEY_WORKOUT_SUMMARY, export_buf);
           dict_write_cstring(iter, MESSAGE_KEY_ROUTINE_DATA, sync_buf);
           app_message_outbox_send();
-          text_layer_set_text(s_sum_info_layer, "Data synced!\nPress any button.");
+          text_layer_set_text(s_sum_info_layer, celebration_buf);
       } else {
           text_layer_set_text(s_sum_info_layer, "Sync Failed.\nCheck Bluetooth.");
       }
@@ -1021,21 +1061,26 @@ static void push_variation_window() {
 }
 
 // --- WORKOUT WINDOW LOGIC ---
+static int get_completed_sets() {
+  int completed = 0;
+  for (int i = 0; i < s_total_exercises; i++) {
+    if (i < s_curr_ex_idx) {
+      if (s_exercises[i].modifier == 2 && i == s_curr_ex_idx - 1) completed += s_exercises[i].current_set; 
+      else completed += s_exercises[i].target_sets; 
+    } else if (i == s_curr_ex_idx) {
+      completed += (s_exercises[i].current_set - 1); 
+    } else if (i > s_curr_ex_idx) {
+      if (i == s_curr_ex_idx + 1 && s_exercises[s_curr_ex_idx].modifier == 2) completed += (s_exercises[i].current_set - 1); 
+    }
+  }
+  return completed;
+}
+
 static void progress_update_proc(Layer *layer, GContext *ctx) {
   GRect bounds = layer_get_bounds(layer);
 
   if (s_total_workout_sets > 0) {
-    int completed = 0;
-    for (int i = 0; i < s_total_exercises; i++) {
-      if (i < s_curr_ex_idx) {
-        if (s_exercises[i].modifier == 2 && i == s_curr_ex_idx - 1) completed += s_exercises[i].current_set; 
-        else completed += s_exercises[i].target_sets; 
-      } else if (i == s_curr_ex_idx) {
-        completed += (s_exercises[i].current_set - 1); 
-      } else if (i > s_curr_ex_idx) {
-        if (i == s_curr_ex_idx + 1 && s_exercises[s_curr_ex_idx].modifier == 2) completed += (s_exercises[i].current_set - 1); 
-      }
-    }
+    int completed = get_completed_sets();
     
     GColor track_color = is_dark_theme() ? PBL_IF_COLOR_ELSE(GColorDarkGray, GColorBlack) : PBL_IF_COLOR_ELSE(GColorLightGray, GColorWhite);
     
@@ -1497,8 +1542,23 @@ static void perform_skip_set() {
   }
 }
 
+// --- VOICE DICTATION LOGIC ---
+static void dictation_session_callback(DictationSession *session, DictationSessionStatus status, char *transcription, void *context) {
+  if (status == DictationSessionStatusSuccess) {
+    snprintf(s_exercises[s_curr_ex_idx].comment, sizeof(s_exercises[0].comment), "%s", transcription);
+    vibes_short_pulse(); 
+  }
+}
+
+static void perform_voice_note() {
+  if (!s_dictation_session) {
+    s_dictation_session = dictation_session_create(sizeof(s_exercises[0].comment), dictation_session_callback, NULL);
+  }
+  dictation_session_start(s_dictation_session);
+}
+
 static void execute_shortcut(int action_idx) {
-  if (s_is_resting && action_idx != 4 && action_idx != 5) return;
+  if (s_is_resting && action_idx != 4 && action_idx != 5 && action_idx != 6) return;
   switch (action_idx) {
     case 0: push_variation_window(); break;
     case 1: 
@@ -1509,6 +1569,7 @@ static void execute_shortcut(int action_idx) {
     case 3: perform_true_skip(); break;
     case 4: perform_finish_set(); break;
     case 5: perform_skip_set(); break;
+    case 6: perform_voice_note(); break; 
   }
 }
 
@@ -1522,6 +1583,16 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   snprintf(time_buf, sizeof(time_buf), "%02d:%02d", m, s);
   text_layer_set_text(s_timer_layer, time_buf);
 
+  // V6.0 NEW: Peek at the Heart Rate sensor every single second!
+  HealthValue current_hr = 0;
+  #if defined(PBL_HEALTH)
+    HealthServiceAccessibilityMask hr_mask = health_service_metric_accessible(HealthMetricHeartRateBPM, time(NULL), time(NULL));
+    if (hr_mask & HealthServiceAccessibilityMaskAvailable) {
+        current_hr = health_service_peek_current_value(HealthMetricHeartRateBPM);
+    }
+  #endif
+
+  // Only run the clock update and average calculation once a minute
   static int s_last_minute = -1;
   if (tick_time->tm_min != s_last_minute) {
     static char clock_buf[16];
@@ -1529,43 +1600,91 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
     else strftime(clock_buf, sizeof(clock_buf), "%I:%M", tick_time);
     text_layer_set_text(s_clock_layer, clock_buf);
     s_last_minute = tick_time->tm_min;
-    #if defined(PBL_HEALTH)
-      HealthServiceAccessibilityMask hr_mask = health_service_metric_accessible(HealthMetricHeartRateBPM, time(NULL), time(NULL));
-      if (hr_mask & HealthServiceAccessibilityMaskAvailable) {
-        HealthValue current_hr = health_service_peek_current_value(HealthMetricHeartRateBPM);
-        if (current_hr > 0) {
-          if (current_hr > s_peak_hr) s_peak_hr = current_hr;
-          s_total_hr += current_hr;
-          s_hr_samples++;
-        }
-      }
-    #endif
+    
+    if (current_hr > 0) {
+        if (current_hr > s_peak_hr) s_peak_hr = current_hr;
+        s_total_hr += current_hr;
+        s_hr_samples++;
+    }
   }
 
+  // V6.0 BONUS: Live 1-second UI updates for rectangle watches!
   #if !defined(PBL_ROUND)
-    #if defined(PBL_HEALTH)
-      HealthServiceAccessibilityMask hr_mask_display = health_service_metric_accessible(HealthMetricHeartRateBPM, time(NULL), time(NULL));
-      if (hr_mask_display & HealthServiceAccessibilityMaskAvailable) {
-        HealthValue hr = health_service_peek_current_value(HealthMetricHeartRateBPM);
+  #if defined(PBL_HEALTH)
+    
+    // V6.0 FIX: Reusing the hr_mask we already fetched at the top of the function!
+    if (hr_mask & HealthServiceAccessibilityMaskNotSupported) {
+        text_layer_set_text(s_hr_layer, ""); // Blank out the corner for Pebble Time / Original Pebble
+    } else {
         static char hr_buf[16];
-        if (hr > 0) snprintf(hr_buf, sizeof(hr_buf), "%lu BPM", (uint32_t)hr);
-        else snprintf(hr_buf, sizeof(hr_buf), "-- BPM");
+        if (current_hr > 0) { 
+            snprintf(hr_buf, sizeof(hr_buf), "%lu BPM", (uint32_t)current_hr);
+        } else {
+            snprintf(hr_buf, sizeof(hr_buf), "-- BPM"); // Show this on Pebble 2 / Emery while searching for pulse
+        }
         text_layer_set_text(s_hr_layer, hr_buf);
-      }
-    #endif
+    }
+    
+  #endif
   #endif
 
   if (s_is_resting) {
+    // V6.0 NEW: Live Ghost Pacer!
+    if (s_last_workout_sec > 0 && s_total_workout_sets > 0) {
+        int expected_sec = (s_last_workout_sec * get_completed_sets()) / s_total_workout_sets;
+        int diff = s_workout_sec - expected_sec;
+        
+        static char ghost_buf[32];
+        int abs_diff = diff < 0 ? -diff : diff;
+        int dm = abs_diff / 60;
+        int ds = abs_diff % 60;
+        
+        if (diff <= 0) {
+            snprintf(ghost_buf, sizeof(ghost_buf), "Ahead -%02d:%02d", dm, ds);
+            text_layer_set_text_color(s_rest_title_layer, PBL_IF_COLOR_ELSE(GColorIslamicGreen, GColorBlack));
+        } else {
+            snprintf(ghost_buf, sizeof(ghost_buf), "Behind +%02d:%02d", dm, ds);
+            text_layer_set_text_color(s_rest_title_layer, PBL_IF_COLOR_ELSE(GColorRed, GColorBlack));
+        }
+        text_layer_set_text(s_rest_title_layer, ghost_buf);
+    } else {
+        text_layer_set_text_color(s_rest_title_layer, GColorBlack);
+        text_layer_set_text(s_rest_title_layer, "REST");
+    }
+
     if (!s_is_paused) {
         s_rest_seconds_remaining--;
     }
+    
+    bool rest_finished = false;
+    
+    // Check if the timer hit zero OR if our heart rate is fully recovered!
     if (s_rest_seconds_remaining <= 0) {
+        rest_finished = true;
+    } else if (s_dynamic_hr_target > 0 && current_hr > 0 && current_hr <= (HealthValue)s_dynamic_hr_target) {
+        rest_finished = true; // Heart rate dropped to target, skip the rest!
+    }
+    
+    if (rest_finished) {
       skip_rest();
       play_vibe(s_rest_vibe); 
     } else {
       static char rest_buf[16];
-      snprintf(rest_buf, sizeof(rest_buf), "%d", s_rest_seconds_remaining);
+      static char skip_buf[32];
+      
+      // Swap the UI depending on the mode!
+      if (s_dynamic_hr_target > 0) {
+          if (current_hr > 0) snprintf(rest_buf, sizeof(rest_buf), "%lu", (uint32_t)current_hr);
+          else snprintf(rest_buf, sizeof(rest_buf), "--");
+          
+          snprintf(skip_buf, sizeof(skip_buf), "Target: %d | Max: %ds", s_dynamic_hr_target, s_rest_seconds_remaining);
+      } else {
+          snprintf(rest_buf, sizeof(rest_buf), "%d", s_rest_seconds_remaining);
+          snprintf(skip_buf, sizeof(skip_buf), "[Select] to Skip");
+      }
+      
       text_layer_set_text(s_rest_time_layer, rest_buf);
+      text_layer_set_text(s_rest_skip_layer, skip_buf);
     }
   }
 }
@@ -1624,6 +1743,11 @@ static void menu_skip_set_callback(int index, void *ctx) {
   perform_skip_set();
 }
 
+static void menu_voice_callback(int index, void *ctx) {
+  window_stack_remove(s_mega_window, false);
+  perform_voice_note();
+}
+
 static void mega_window_load(Window *window) {
   int num_items = 0;
   
@@ -1637,6 +1761,12 @@ static void mega_window_load(Window *window) {
     .title = "View Note",
     .subtitle = s_exercises[s_curr_ex_idx].comment[0] != '\0' ? s_exercises[s_curr_ex_idx].comment : "No note attached",
     .callback = menu_note_callback,
+  };
+  
+  s_mega_menu_items[num_items++] = (SimpleMenuItem) {
+    .title = "Record Voice Note",
+    .subtitle = "Dictate note for this exercise",
+    .callback = menu_voice_callback,
   };
 
   s_mega_menu_items[num_items++] = (SimpleMenuItem) {
@@ -1653,13 +1783,13 @@ static void mega_window_load(Window *window) {
     
   s_mega_menu_items[num_items++] = (SimpleMenuItem) {
     .title = "Skip Set (Log 0)",
-    .subtitle = "Log 0/0 and progress to next set",
+    .subtitle = "Progress to next set",
     .callback = menu_skip_set_callback,
   };
   
   s_mega_menu_items[num_items++] = (SimpleMenuItem) {
     .title = "Skip Exercise (Log 0)",
-    .subtitle = "Log 0/0 and progress to next exercise",
+    .subtitle = "Progress to next exercise",
     .callback = menu_skip_callback,
   };
 
@@ -1854,7 +1984,7 @@ static void workout_window_load(Window *window) {
     int r_skip_y  = is_tall ? 100 : 75;
   #endif
 
-  s_rest_title_layer = build_text_layer(GRect(0, r_title_y, bounds.size.w, 30), FONT_KEY_GOTHIC_28_BOLD, GColorBlack, GTextAlignmentCenter, s_rest_overlay_layer);
+  s_rest_title_layer = build_text_layer(GRect(0, r_title_y, bounds.size.w, 30), FONT_KEY_GOTHIC_24_BOLD, GColorBlack, GTextAlignmentCenter, s_rest_overlay_layer);
   text_layer_set_text(s_rest_title_layer, "REST");
   s_rest_time_layer = build_text_layer(GRect(0, r_time_y, bounds.size.w, 45), FONT_KEY_BITHAM_42_BOLD, PBL_IF_COLOR_ELSE(GColorOrange, GColorBlack), GTextAlignmentCenter, s_rest_overlay_layer);
   s_rest_skip_layer = build_text_layer(GRect(0, r_skip_y, bounds.size.w, 20), FONT_KEY_GOTHIC_18, GColorBlack, GTextAlignmentCenter, s_rest_overlay_layer);
@@ -1982,6 +2112,8 @@ static void start_workout_from_slot(int slot_idx) {
   s_rest_seconds_remaining = 0;
   s_workout_active = true; 
   
+  s_last_workout_sec = persist_exists(GHOST_KEY_BASE + slot_idx) ? persist_read_int(GHOST_KEY_BASE + slot_idx) : 0;
+  
   push_workout_window(); 
 }
 
@@ -2020,6 +2152,8 @@ static void menu_select_callback(MenuLayer *menu_layer, MenuIndex *cell_index, v
       }
       s_temp_weight = active_weight;
       
+      s_last_workout_sec = persist_exists(GHOST_KEY_BASE + s_current_slot) ? persist_read_int(GHOST_KEY_BASE + s_current_slot) : 0;
+      
       menu_layer_reload_data(s_menu_layer);
       push_workout_window();
       return;
@@ -2036,9 +2170,7 @@ static void menu_select_callback(MenuLayer *menu_layer, MenuIndex *cell_index, v
   }
 }
 
-// ==========================================
-// ROUTINE INSPECTOR LOGIC
-// ==========================================
+// --- ROUTINE INSPECTOR LOGIC ---
 static uint16_t inspector_get_num_rows_callback(MenuLayer *menu_layer, uint16_t section_index, void *data) {
   return s_slot_counts[s_slot_to_edit];
 }
@@ -2086,9 +2218,7 @@ static void push_inspector_window() {
   window_stack_push(s_inspector_window, true);
 }
 
-// ==========================================
-// V5.3 NEW: ROUTINE ACTION MENU
-// ==========================================
+// --- ROUTINE ACTION MENU ---
 static void action_start_callback(int index, void *ctx) {
   window_stack_remove(s_action_window, false);
   start_workout_from_slot(s_slot_to_edit);
@@ -2151,26 +2281,63 @@ static void menu_select_long_callback(MenuLayer *menu_layer, MenuIndex *cell_ind
   }
 }
 
+static void save_routine_to_slot(int slot_idx) {
+  RoutineHeader header;
+  snprintf(header.name, sizeof(header.name), "%s", s_routine_name);
+  header.total_exercises = s_total_exercises;
+  persist_write_data(STORAGE_KEY_BASE + slot_idx, &header, sizeof(RoutineHeader));
+  
+  for (int j = 0; j < s_total_exercises; j++) {
+      persist_write_data(ROUTINE_EX_BASE + (slot_idx * MAX_EXERCISES) + j, &s_exercises[j], sizeof(Exercise));
+  }
+}
+
 static void inbox_received_callback(DictionaryIterator *iterator, void *context) {
   Tuple *routine_data_tuple = dict_find(iterator, MESSAGE_KEY_ROUTINE_DATA);
   if (routine_data_tuple && routine_data_tuple->type == TUPLE_CSTRING) {
     char *delimited_string = routine_data_tuple->value->cstring;
     
-    parse_routine_string(delimited_string);
-    
-    int target_slot = s_active_slots; 
-    for (int i = 0; i < s_active_slots; i++) {
-        if (strcmp(s_slot_names[i], s_routine_name) == 0) { target_slot = i; break; }
-    }
-    if (target_slot > MAX_SLOTS - 1) target_slot = MAX_SLOTS - 1; 
-    
-    RoutineHeader header;
-    snprintf(header.name, sizeof(header.name), "%s", s_routine_name);
-    header.total_exercises = s_total_exercises;
-    persist_write_data(STORAGE_KEY_BASE + target_slot, &header, sizeof(RoutineHeader));
-    
-    for (int j = 0; j < s_total_exercises; j++) {
-        persist_write_data(ROUTINE_EX_BASE + (target_slot * MAX_EXERCISES) + j, &s_exercises[j], sizeof(Exercise));
+    if (strncmp(delimited_string, "BATCH~", 6) == 0) {
+        
+        for(int i = 0; i < MAX_SLOTS; i++) {
+            persist_delete(STORAGE_KEY_BASE + i);
+            for(int j = 0; j < MAX_EXERCISES; j++) persist_delete(ROUTINE_EX_BASE + (i * MAX_EXERCISES) + j);
+        }
+        s_active_slots = 0;
+
+        char *start = delimited_string + 6; 
+        char *end = start;
+        int slot_idx = 0;
+
+        while (*end != '\0' && slot_idx < MAX_SLOTS) {
+            if (*end == '~') {
+                *end = '\0'; 
+                parse_routine_string(start);
+                save_routine_to_slot(slot_idx);
+                slot_idx++;
+                start = end + 1; 
+            }
+            end++;
+        }
+        
+        if (*start != '\0' && slot_idx < MAX_SLOTS) {
+            parse_routine_string(start);
+            save_routine_to_slot(slot_idx);
+        }
+        
+        vibes_double_pulse(); 
+
+    } else {
+        // --- STANDARD SINGLE-ROUTINE LOAD (Two-Way Sync Backup) ---
+        parse_routine_string(delimited_string);
+        
+        int target_slot = s_active_slots; 
+        for (int i = 0; i < s_active_slots; i++) {
+            if (strcmp(s_slot_names[i], s_routine_name) == 0) { target_slot = i; break; }
+        }
+        if (target_slot > MAX_SLOTS - 1) target_slot = MAX_SLOTS - 1; 
+        
+        save_routine_to_slot(target_slot);
     }
     
     refresh_directory();
@@ -2286,7 +2453,8 @@ static void deinit() {
   if (s_note_window) { window_destroy(s_note_window); s_note_window = NULL; }
   if (s_action_window) { window_destroy(s_action_window); s_action_window = NULL; }
   if (s_inspector_window) { window_destroy(s_inspector_window); s_inspector_window = NULL; }
-  
+  if (s_dictation_session) { dictation_session_destroy(s_dictation_session); s_dictation_session = NULL; }
+    
   window_destroy(s_main_window); 
   s_main_window = NULL;
 }

@@ -1,6 +1,6 @@
 // src/pkjs/index.js
 
-var isDevMode = false;
+var isDevMode = true;
 
 // 1. Tell us when the JS environment is ready
 Pebble.addEventListener('ready', function(e) {
