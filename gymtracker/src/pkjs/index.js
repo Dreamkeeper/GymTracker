@@ -1,6 +1,6 @@
 // src/pkjs/index.js
 
-var isDevMode = true;
+var isDevMode = false;
 
 // 1. Tell us when the JS environment is ready
 Pebble.addEventListener('ready', function(e) {
@@ -53,7 +53,7 @@ Pebble.addEventListener('webviewclosed', function(e) {
       localStorage.setItem('workoutHistory', '[]');
     }
 
-    // V5.0 NEW: Catch the updated synced routines dictionary and save it to the phone!
+    // Catch the updated synced routines dictionary and save it to the phone!
     if (configData.updatedSync !== undefined) {
       localStorage.setItem('synced_routines', JSON.stringify(configData.updatedSync));
     }
@@ -135,12 +135,65 @@ Pebble.addEventListener('appmessage', function(e) {
   // V5.0 TWO-WAY SYNC INTERCEPTOR
   if (e.payload.ROUTINE_DATA) {
       var syncString = e.payload.ROUTINE_DATA;
-      var routineName = syncString.split('|')[0];
+      var parts = syncString.split('|');
+      var routineName = parts[0];
 
-      // Save it permanently to the phone's local storage
+      // Save it permanently to the phone's local storage (For the Manual Sync Box)
       var syncedRoutines = JSON.parse(localStorage.getItem('synced_routines') || '{}');
       syncedRoutines[routineName] = syncString;
       localStorage.setItem('synced_routines', JSON.stringify(syncedRoutines));
       console.log("Two-Way Sync Saved for: " + routineName);
+
+      // V6.1 FIX: Silentjay's Background Auto-Sync Parser
+      var autoSyncEnabled = localStorage.getItem('autoSyncEnabled') === 'true';
+      if (autoSyncEnabled) {
+          var exercises = [];
+          var startIndex = 1;
+          var progressionMode = "-1";
+          var weightIncrement = "2";
+
+          // Parse progression settings if present
+          if (parts[1] === "-1" || parts[1] === "0" || parts[1] === "1") {
+              progressionMode = parts[1];
+              weightIncrement = parts[2];
+              startIndex = 3;
+          }
+
+          // Parse the individual exercises
+          for (var i = startIndex; i < parts.length; i += 6) {
+              if (parts[i]) {
+                  exercises.push([
+                      parts[i],
+                      parseInt(parts[i+1]),
+                      parseInt(parts[i+2]),
+                      parseInt(parts[i+3]),
+                      parseInt(parts[i+4]),
+                      parts[i+5] === "-" ? "" : parts[i+5]
+                  ]);
+              }
+          }
+
+          // Fetch the local routine array and update the target
+          var savedRoutines = JSON.parse(localStorage.getItem('savedRoutines') || '[]');
+          var existingIndex = savedRoutines.findIndex(function(r) { return r.name === routineName; });
+          
+          var routineData = {
+              name: routineName,
+              exercises: exercises,
+              progressionMode: progressionMode,
+              weightIncrement: weightIncrement
+          };
+
+          if (existingIndex >= 0) {
+              savedRoutines[existingIndex] = routineData;
+          } else {
+              savedRoutines.push(routineData);
+          }
+
+          // Write back to LocalStorage
+          localStorage.setItem('savedRoutines', JSON.stringify(savedRoutines));
+          localStorage.setItem('lastRoutine', routineName);
+          console.log("Auto-synced routine updated in background: " + routineName);
+      }
   }
 });

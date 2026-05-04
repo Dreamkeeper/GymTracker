@@ -264,6 +264,10 @@ static void parse_routine_string(const char *data) {
           else if (field == 3) s_exercises[ex_idx].target_weight = atoi(temp);
           else if (field == 4) {
             s_exercises[ex_idx].modifier = atoi(temp);
+            if (s_exercises[ex_idx].modifier == 4) {
+                s_exercises[ex_idx].modifier = 0;
+                s_exercises[ex_idx].target_weight = 0;
+            }
             if (s_exercises[ex_idx].modifier == 1) {
                 s_exercises[ex_idx].target_sets *= 2;
                 if (s_exercises[ex_idx].target_sets > 10) s_exercises[ex_idx].target_sets = 10; 
@@ -861,9 +865,17 @@ static void summary_window_load(Window *window) {
       }
     }
     
+    // V6.1 FIX: Smart Bodyweight Progression!
     if (s_progression_mode != -1 && ex_misses == 0) {
-      if (s_progression_mode == 0) s_exercises[i].target_weight += s_weight_increment;
-      else if (s_progression_mode == 1) s_exercises[i].target_reps += 1;
+      if (s_progression_mode == 0) {
+          if (s_exercises[i].target_weight > 0) {
+              s_exercises[i].target_weight += s_weight_increment; // Add weight normally
+          } else {
+              s_exercises[i].target_reps += 1; // Adapt: Add reps if it's bodyweight!
+          }
+      } else if (s_progression_mode == 1) {
+          s_exercises[i].target_reps += 1;
+      }
     }
   }
 
@@ -1150,7 +1162,7 @@ static void animate_highlight_box(bool animated) {
     } else { offset_x = 20; }
   #endif
 
-  bool is_bw = (s_exercises[s_curr_ex_idx].modifier == 4);
+  bool is_bw = (s_exercises[s_curr_ex_idx].target_weight == 0);
   int center_x;
   
   if (is_bw) {
@@ -1277,10 +1289,16 @@ static void update_workout_ui(bool animate_box) {
   text_layer_set_text(s_next_exercise_layer, next_buf);
 
   int active_target_weight = ex->target_weight;
+  int active_target_reps = ex->target_reps; // V6.1 FIX: Track reps dynamically
   static char set_buf[32];
 
   if (ex->modifier == 1 && (ex->current_set % 2 == 0)) {
-      active_target_weight = (active_target_weight * (100 - s_drop_set_pct)) / 100;
+      // V6.1 FIX: Drop reps if bodyweight, otherwise drop weight!
+      if (ex->target_weight == 0) {
+          active_target_reps = (active_target_reps * (100 - s_drop_set_pct)) / 100;
+      } else {
+          active_target_weight = (active_target_weight * (100 - s_drop_set_pct)) / 100;
+      }
       snprintf(set_buf, sizeof(set_buf), "Set %d of %d (DROP)", ex->current_set, ex->target_sets);
   } else if (ex->modifier == 3) {
       snprintf(set_buf, sizeof(set_buf), "Set %d of %d (WARM)", ex->current_set, ex->target_sets);
@@ -1291,11 +1309,8 @@ static void update_workout_ui(bool animate_box) {
 
   text_layer_set_text(s_label_reps_layer, "Reps");
 
-  if (s_weight_unit_idx == 0) text_layer_set_text(s_label_weight_layer, "Weight (kg)");
-  else text_layer_set_text(s_label_weight_layer, "Weight (lbs)");
-
   static char t_reps_buf[32], t_weight_buf[32], reps_buf[16], weight_buf[16];
-  snprintf(t_reps_buf, sizeof(t_reps_buf), "Target: %d", ex->target_reps);
+  snprintf(t_reps_buf, sizeof(t_reps_buf), "Target: %d", active_target_reps);
   snprintf(reps_buf, sizeof(reps_buf), "%d", s_temp_reps);
 
   if (s_weight_unit_idx == 0) text_layer_set_text(s_label_weight_layer, "Weight (kg)");
@@ -1309,7 +1324,7 @@ static void update_workout_ui(bool animate_box) {
   text_layer_set_text(s_actual_reps_layer, reps_buf);
   text_layer_set_text(s_actual_weight_layer, weight_buf);
 
-  bool is_bw = (ex->modifier == 4);
+  bool is_bw = (ex->target_weight == 0); // V6.1 FIX: Center UI if weight is 0
   layer_set_hidden(text_layer_get_layer(s_label_weight_layer), is_bw);
   layer_set_hidden(text_layer_get_layer(s_actual_weight_layer), is_bw);
   layer_set_hidden(text_layer_get_layer(s_target_weight_layer), is_bw);
@@ -1386,10 +1401,14 @@ static void swap_exercise() {
 
   Exercise *new_ex = &s_exercises[s_curr_ex_idx];
   s_temp_reps = new_ex->target_reps;
-  
   int active_weight = new_ex->target_weight;
+  
   if (new_ex->modifier == 1 && (new_ex->current_set % 2 == 0)) {
-      active_weight = (active_weight * (100 - s_drop_set_pct)) / 100;
+      if (new_ex->target_weight == 0) {
+          s_temp_reps = (s_temp_reps * (100 - s_drop_set_pct)) / 100;
+      } else {
+          active_weight = (active_weight * (100 - s_drop_set_pct)) / 100;
+      }
   }
   s_temp_weight = active_weight;
   
@@ -1426,13 +1445,19 @@ static void perform_true_skip() {
 
   if (s_curr_ex_idx + 1 < s_total_exercises) {
      s_curr_ex_idx++;
+     
      Exercise *new_ex = &s_exercises[s_curr_ex_idx];
      s_temp_reps = new_ex->target_reps;
-     s_temp_weight = new_ex->target_weight;
+     int active_weight = new_ex->target_weight;
      
      if (new_ex->modifier == 1 && (new_ex->current_set % 2 == 0)) {
-         s_temp_weight = (s_temp_weight * (100 - s_drop_set_pct)) / 100;
+         if (new_ex->target_weight == 0) {
+             s_temp_reps = (s_temp_reps * (100 - s_drop_set_pct)) / 100;
+         } else {
+             active_weight = (active_weight * (100 - s_drop_set_pct)) / 100;
+         }
      }
+     s_temp_weight = active_weight;
      
      s_is_resting = false;
      layer_set_hidden(s_rest_overlay_layer, true);
@@ -1513,10 +1538,14 @@ static void perform_finish_set() {
 
   Exercise *next_ex = &s_exercises[s_curr_ex_idx]; 
   s_temp_reps = next_ex->target_reps;
-  
   int next_target_weight = next_ex->target_weight;
+  
   if (next_ex->modifier == 1 && (next_ex->current_set % 2 == 0)) {
-      next_target_weight = (next_target_weight * (100 - s_drop_set_pct)) / 100;
+      if (next_ex->target_weight == 0) {
+          s_temp_reps = (s_temp_reps * (100 - s_drop_set_pct)) / 100;
+      } else {
+          next_target_weight = (next_target_weight * (100 - s_drop_set_pct)) / 100;
+      }
   }
   s_temp_weight = next_target_weight;
   
@@ -1838,7 +1867,7 @@ static void wo_down_long_click(ClickRecognizerRef recognizer, void *context) {
 static void wo_select_short_click(ClickRecognizerRef recognizer, void *context) {
   if (s_is_resting) { skip_rest(); return; }
   
-  if (s_exercises[s_curr_ex_idx].modifier == 4) {
+  if (s_exercises[s_curr_ex_idx].target_weight == 0) {
       s_edit_mode = 0; 
   } else {
       s_edit_mode = !s_edit_mode; 
@@ -2100,11 +2129,16 @@ static void start_workout_from_slot(int slot_idx) {
   s_peak_hr = 0;
   s_total_hr = 0;
   s_hr_samples = 0;
-  s_temp_reps = s_exercises[0].target_reps;
   
+  s_temp_reps = s_exercises[0].target_reps;
   int active_weight = s_exercises[0].target_weight;
+  
   if (s_exercises[0].modifier == 1 && (s_exercises[0].current_set % 2 == 0)) {
-      active_weight = (active_weight * (100 - s_drop_set_pct)) / 100;
+      if (s_exercises[0].target_weight == 0) {
+          s_temp_reps = (s_temp_reps * (100 - s_drop_set_pct)) / 100;
+      } else {
+          active_weight = (active_weight * (100 - s_drop_set_pct)) / 100;
+      }
   }
   s_temp_weight = active_weight;
   
@@ -2147,8 +2181,13 @@ static void menu_select_callback(MenuLayer *menu_layer, MenuIndex *cell_index, v
       
       s_temp_reps = s_exercises[s_curr_ex_idx].target_reps;
       int active_weight = s_exercises[s_curr_ex_idx].target_weight;
+      
       if (s_exercises[s_curr_ex_idx].modifier == 1 && (s_exercises[s_curr_ex_idx].current_set % 2 == 0)) {
-          active_weight = (active_weight * (100 - s_drop_set_pct)) / 100;
+          if (s_exercises[s_curr_ex_idx].target_weight == 0) {
+              s_temp_reps = (s_temp_reps * (100 - s_drop_set_pct)) / 100;
+          } else {
+              active_weight = (active_weight * (100 - s_drop_set_pct)) / 100;
+          }
       }
       s_temp_weight = active_weight;
       
@@ -2180,7 +2219,7 @@ static void inspector_draw_row_callback(GContext* ctx, const Layer *cell_layer, 
   persist_read_data(ROUTINE_EX_BASE + (s_slot_to_edit * MAX_EXERCISES) + cell_index->row, &temp_ex, sizeof(Exercise));
   
   char subtitle[32];
-  if (temp_ex.modifier == 4) {
+  if (temp_ex.target_weight == 0) {
       snprintf(subtitle, sizeof(subtitle), "%d Sets x %d Reps (BW)", temp_ex.target_sets, temp_ex.target_reps);
   } else {
       snprintf(subtitle, sizeof(subtitle), "%d Sets x %d Reps @ %d%s", 
