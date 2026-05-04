@@ -292,10 +292,15 @@
             if (tabId === 'tab-builder' || tabId === 'tab-progression') {
                 btnAddBatch.style.display = "block";
                 btnSendSingle.style.display = "block";
+                btnSendSingle.innerText = "Save & Send Single Routine to Watch";
             } else if (tabId === 'tab-batch') {
                 btnAddBatch.style.display = "none";
                 btnSendSingle.style.display = "none"; 
-            } else {
+            } else if (tabId === 'tab-history-cloud') {
+                btnAddBatch.style.display = "none";
+                btnSendSingle.style.display = "none"; 
+                btnSendSingle.innerText = "Send Google Sheets data to watch";
+            }else {
                 btnAddBatch.style.display = "none";
                 btnSendSingle.style.display = "block"; 
             }
