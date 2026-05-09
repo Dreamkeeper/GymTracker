@@ -97,7 +97,8 @@ static GColor get_text_color() { return is_dark_theme() ? GColorWhite : GColorBl
 // --- WORKOUT TRACKING ---
 static int s_curr_ex_idx = 0;
 static int s_workout_sec = 0;
-static int s_edit_mode = 0; 
+static int  
+static bool s_is_timed_active = false;
 static int s_temp_reps = 0;
 static int s_temp_weight = 0;
 
@@ -266,6 +267,9 @@ static void parse_routine_string(const char *data) {
             s_exercises[ex_idx].modifier = atoi(temp);
             if (s_exercises[ex_idx].modifier == 4) {
                 s_exercises[ex_idx].modifier = 0;
+                s_exercises[ex_idx].target_weight = 0;
+            }
+            if (s_exercises[ex_idx].modifier == 6) {
                 s_exercises[ex_idx].target_weight = 0;
             }
             if (s_exercises[ex_idx].modifier == 1) {
@@ -867,7 +871,11 @@ static void summary_window_load(Window *window) {
     
     // V6.1 FIX: Smart Bodyweight Progression!
     if (s_progression_mode != -1 && ex_misses == 0) {
-      if (s_progression_mode == 0) {
+      if (s_exercises[i].modifier == 6) {
+          int increase = (s_exercises[i].target_reps * 5) / 100;
+          if (increase < 1) increase = 1;
+          s_exercises[i].target_reps += increase;
+      } else if (s_progression_mode == 0) {
           if (s_exercises[i].target_weight > 0) {
               s_exercises[i].target_weight += s_weight_increment; // Add weight normally
           } else {
@@ -940,6 +948,7 @@ static void summary_window_load(Window *window) {
         const char *mod_label = "";
         if (s_exercises[i].modifier == 1) mod_label = " [DROP]";
         else if (s_exercises[i].modifier == 2) mod_label = " [SUPER]";
+        else if (s_exercises[i].modifier == 6) mod_label = " [TIMED]";
         
         written = snprintf(export_buf + offset, limit - offset, "|%s%s", s_exercises[i].name, mod_label);
         offset += (written < limit - offset) ? written : limit - offset - 1;
@@ -1307,7 +1316,11 @@ static void update_workout_ui(bool animate_box) {
   }
   text_layer_set_text(s_set_layer, set_buf);
 
-  text_layer_set_text(s_label_reps_layer, "Reps");
+  if (ex->modifier == 6) {
+      text_layer_set_text(s_label_reps_layer, "Secs");
+  } else {
+      text_layer_set_text(s_label_reps_layer, "Reps");
+  }
 
   static char t_reps_buf[32], t_weight_buf[32], reps_buf[16], weight_buf[16];
   snprintf(t_reps_buf, sizeof(t_reps_buf), "Target: %d", active_target_reps);
@@ -1385,6 +1398,25 @@ static void skip_rest() {
   update_workout_ui(false);
 }
 
+static void init_temp_values(Exercise *ex) {
+  s_is_timed_active = false;
+  if (ex->modifier == 6) {
+    s_temp_reps = 0;
+  } else {
+    s_temp_reps = ex->target_reps;
+    if (ex->modifier == 1 && (ex->current_set % 2 == 0) && ex->target_weight == 0) {
+      s_temp_reps = (s_temp_reps * (100 - s_drop_set_pct)) / 100;
+    }
+  }
+
+  int active_weight = ex->target_weight;
+  if (ex->modifier == 1 && (ex->current_set % 2 == 0) && ex->target_weight != 0) {
+      active_weight = (active_weight * (100 - s_drop_set_pct)) / 100;
+  }
+  s_temp_weight = active_weight;
+  
+}
+
 static void swap_exercise() {
   if (s_is_resting) return;
   if (s_curr_ex_idx + 1 >= s_total_exercises) return;
@@ -1400,17 +1432,7 @@ static void swap_exercise() {
   s_exercises[next_idx] = temp;
 
   Exercise *new_ex = &s_exercises[s_curr_ex_idx];
-  s_temp_reps = new_ex->target_reps;
-  int active_weight = new_ex->target_weight;
-  
-  if (new_ex->modifier == 1 && (new_ex->current_set % 2 == 0)) {
-      if (new_ex->target_weight == 0) {
-          s_temp_reps = (s_temp_reps * (100 - s_drop_set_pct)) / 100;
-      } else {
-          active_weight = (active_weight * (100 - s_drop_set_pct)) / 100;
-      }
-  }
-  s_temp_weight = active_weight;
+  init_temp_values(new_ex);
   
   update_workout_ui(true);
 }
@@ -1447,21 +1469,10 @@ static void perform_true_skip() {
      s_curr_ex_idx++;
      
      Exercise *new_ex = &s_exercises[s_curr_ex_idx];
-     s_temp_reps = new_ex->target_reps;
-     int active_weight = new_ex->target_weight;
-     
-     if (new_ex->modifier == 1 && (new_ex->current_set % 2 == 0)) {
-         if (new_ex->target_weight == 0) {
-             s_temp_reps = (s_temp_reps * (100 - s_drop_set_pct)) / 100;
-         } else {
-             active_weight = (active_weight * (100 - s_drop_set_pct)) / 100;
-         }
-     }
-     s_temp_weight = active_weight;
+     init_temp_values(new_ex);
      
      s_is_resting = false;
      layer_set_hidden(s_rest_overlay_layer, true);
-     s_edit_mode = 0;
      
      update_workout_ui(true);
   } else {
@@ -1537,19 +1548,9 @@ static void perform_finish_set() {
   }
 
   Exercise *next_ex = &s_exercises[s_curr_ex_idx]; 
-  s_temp_reps = next_ex->target_reps;
-  int next_target_weight = next_ex->target_weight;
+  init_temp_values(next_ex);
   
-  if (next_ex->modifier == 1 && (next_ex->current_set % 2 == 0)) {
-      if (next_ex->target_weight == 0) {
-          s_temp_reps = (s_temp_reps * (100 - s_drop_set_pct)) / 100;
-      } else {
-          next_target_weight = (next_target_weight * (100 - s_drop_set_pct)) / 100;
-      }
-  }
-  s_temp_weight = next_target_weight;
-  
-  s_edit_mode = 0; 
+   
   
   if (s_rest_seconds_remaining > 0) {
     s_is_resting = true;
@@ -1605,6 +1606,14 @@ static void execute_shortcut(int action_idx) {
 static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   if (!s_is_paused) {
       s_workout_sec++;
+      
+      if (s_is_timed_active) {
+          s_temp_reps++;
+          if (s_temp_reps == s_exercises[s_curr_ex_idx].target_reps) {
+              vibes_long_pulse();
+          }
+          update_workout_ui(false);
+      }
   }
   int m = s_workout_sec / 60;
   int s = s_workout_sec % 60;
@@ -1867,8 +1876,10 @@ static void wo_down_long_click(ClickRecognizerRef recognizer, void *context) {
 static void wo_select_short_click(ClickRecognizerRef recognizer, void *context) {
   if (s_is_resting) { skip_rest(); return; }
   
-  if (s_exercises[s_curr_ex_idx].target_weight == 0) {
-      s_edit_mode = 0; 
+  if (s_exercises[s_curr_ex_idx].modifier == 6) {
+      s_is_timed_active = !s_is_timed_active;
+  } else if (s_exercises[s_curr_ex_idx].target_weight == 0) {
+      s_edit_mode = 0;
   } else {
       s_edit_mode = !s_edit_mode; 
   }
@@ -2029,7 +2040,7 @@ static void workout_window_load(Window *window) {
   layer_set_update_proc(s_progress_layer, progress_update_proc);
   layer_add_child(w_layer, s_progress_layer);
 
-  s_edit_mode = 0; 
+  s_edit_mode = 0;
   if (s_rest_seconds_remaining > 0) {
     s_is_resting = true;
     set_rest_overlay_state(true, false);
@@ -2130,17 +2141,7 @@ static void start_workout_from_slot(int slot_idx) {
   s_total_hr = 0;
   s_hr_samples = 0;
   
-  s_temp_reps = s_exercises[0].target_reps;
-  int active_weight = s_exercises[0].target_weight;
-  
-  if (s_exercises[0].modifier == 1 && (s_exercises[0].current_set % 2 == 0)) {
-      if (s_exercises[0].target_weight == 0) {
-          s_temp_reps = (s_temp_reps * (100 - s_drop_set_pct)) / 100;
-      } else {
-          active_weight = (active_weight * (100 - s_drop_set_pct)) / 100;
-      }
-  }
-  s_temp_weight = active_weight;
+  init_temp_values(&s_exercises[0]);
   
   s_is_resting = false;
   s_rest_seconds_remaining = 0;
@@ -2179,17 +2180,7 @@ static void menu_select_callback(MenuLayer *menu_layer, MenuIndex *cell_index, v
       s_is_resting = false;
       s_rest_seconds_remaining = 0;
       
-      s_temp_reps = s_exercises[s_curr_ex_idx].target_reps;
-      int active_weight = s_exercises[s_curr_ex_idx].target_weight;
-      
-      if (s_exercises[s_curr_ex_idx].modifier == 1 && (s_exercises[s_curr_ex_idx].current_set % 2 == 0)) {
-          if (s_exercises[s_curr_ex_idx].target_weight == 0) {
-              s_temp_reps = (s_temp_reps * (100 - s_drop_set_pct)) / 100;
-          } else {
-              active_weight = (active_weight * (100 - s_drop_set_pct)) / 100;
-          }
-      }
-      s_temp_weight = active_weight;
+      init_temp_values(&s_exercises[s_curr_ex_idx]);
       
       s_last_workout_sec = persist_exists(GHOST_KEY_BASE + s_current_slot) ? persist_read_int(GHOST_KEY_BASE + s_current_slot) : 0;
       
