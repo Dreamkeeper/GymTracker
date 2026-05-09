@@ -97,10 +97,10 @@ static GColor get_text_color() { return is_dark_theme() ? GColorWhite : GColorBl
 // --- WORKOUT TRACKING ---
 static int s_curr_ex_idx = 0;
 static int s_workout_sec = 0;
-static int  
-static bool s_is_timed_active = false;
 static int s_temp_reps = 0;
 static int s_temp_weight = 0;
+static int s_edit_mode = 0;
+static bool s_is_timed_active = false;
 
 // --- GEOMETRY & CACHING ---
 static int s_line1_y, s_line2_y;
