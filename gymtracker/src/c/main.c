@@ -79,6 +79,8 @@ static int s_shortcut_up = 1;
 static int s_shortcut_down = 2; 
 static int s_shortcut_select = 4;
 static int s_dynamic_hr_target = 0; 
+static int s_enable_ghost = 1;       // NEW: Ghost Toggle
+static int s_enable_sensation = 1;   // NEW: Sensation Toggle
 
 // --- THEME HELPERS ---
 static bool is_dark_theme() {
@@ -235,6 +237,8 @@ static void load_settings() {
   if(persist_exists(SETTINGS_KEY_BASE + 16)) s_shortcut_down = persist_read_int(SETTINGS_KEY_BASE + 16);
   if(persist_exists(SETTINGS_KEY_BASE + 17)) s_shortcut_select = persist_read_int(SETTINGS_KEY_BASE + 17);
   if(persist_exists(SETTINGS_KEY_BASE + 18)) s_dynamic_hr_target = persist_read_int(SETTINGS_KEY_BASE + 18); 
+  if(persist_exists(SETTINGS_KEY_BASE + 19)) s_enable_ghost = persist_read_int(SETTINGS_KEY_BASE + 19);
+  if(persist_exists(SETTINGS_KEY_BASE + 20)) s_enable_sensation = persist_read_int(SETTINGS_KEY_BASE + 20);
 }
 
 static void save_setting(int key_offset, int value) {
@@ -393,7 +397,7 @@ static uint16_t settings_get_num_rows_callback(MenuLayer *menu_layer, uint16_t s
   if (section_index == 0) return 5; 
   if (section_index == 1) return 3; 
   if (section_index == 2) return 1; 
-  if (section_index == 3) return 4; 
+  if (section_index == 3) return 6; // V6.2 Fix: Added two new toggles
   if (section_index == 4) return 3; 
   return 0;
 }
@@ -454,6 +458,14 @@ static void settings_draw_row_callback(GContext* ctx, const Layer *cell_layer, M
         else if (s_dark_mode == 1) snprintf(subtitle, sizeof(subtitle), "On");
         else snprintf(subtitle, sizeof(subtitle), "Auto (8PM-7AM)");
         break;
+      case 4: 
+        snprintf(title, sizeof(title), "Ghost Pacer"); 
+        snprintf(subtitle, sizeof(subtitle), s_enable_ghost ? "On" : "Off"); 
+        break;
+      case 5: 
+        snprintf(title, sizeof(title), "Sensation Q."); 
+        snprintf(subtitle, sizeof(subtitle), s_enable_sensation ? "On" : "Off"); 
+        break;
     }
   } else if (cell_index->section == 4) { 
     static const char* actions[] = {"Variations", "View Note", "Swap (Later)", "Skip Entirely", "Finish Set", "Skip Set", "Voice Note"};
@@ -503,6 +515,14 @@ static void settings_select_callback(MenuLayer *menu_layer, MenuIndex *cell_inde
         window_set_background_color(s_settings_window, get_bg_color());
         menu_layer_set_normal_colors(s_settings_menu_layer, get_bg_color(), get_text_color());
         menu_layer_set_highlight_colors(s_settings_menu_layer, get_theme_color(), get_bg_color());
+        break;
+      case 4: 
+        s_enable_ghost = !s_enable_ghost; 
+        save_setting(19, s_enable_ghost); 
+        break;
+      case 5: 
+        s_enable_sensation = !s_enable_sensation; 
+        save_setting(20, s_enable_sensation); 
         break;
     }
   } else if (cell_index->section == 4) { 
@@ -662,7 +682,8 @@ static void exit_select_click(ClickRecognizerRef recognizer, void *context) {
   s_workout_active = false;          
   persist_delete(ACTIVE_STATE_KEY);  
   vibes_double_pulse();
-  push_sensation_window(); 
+  if (s_enable_sensation) push_sensation_window();
+  else push_summary_window();
   window_stack_remove(s_workout_window, false); 
   window_stack_remove(s_exit_window, false);    
 }
@@ -855,7 +876,11 @@ static void summary_window_load(Window *window) {
       int t_w = s_exercises[i].target_weight;
       
       if (s_exercises[i].modifier == 1 && ((j + 1) % 2 == 0)) {
-          t_w = (t_w * (100 - s_drop_set_pct)) / 100;
+          if (s_exercises[i].target_weight == 0) {
+              t_r = (t_r * (100 - s_drop_set_pct)) / 100;
+          } else {
+              t_w = (t_w * (100 - s_drop_set_pct)) / 100;
+          }
       }
       
       total_target_reps += t_r;
@@ -1302,7 +1327,6 @@ static void update_workout_ui(bool animate_box) {
   static char set_buf[32];
 
   if (ex->modifier == 1 && (ex->current_set % 2 == 0)) {
-      // V6.1 FIX: Drop reps if bodyweight, otherwise drop weight!
       if (ex->target_weight == 0) {
           active_target_reps = (active_target_reps * (100 - s_drop_set_pct)) / 100;
       } else {
@@ -1414,7 +1438,6 @@ static void init_temp_values(Exercise *ex) {
       active_weight = (active_weight * (100 - s_drop_set_pct)) / 100;
   }
   s_temp_weight = active_weight;
-  
 }
 
 static void swap_exercise() {
@@ -1477,7 +1500,8 @@ static void perform_true_skip() {
      update_workout_ui(true);
   } else {
      vibes_double_pulse();
-     push_sensation_window(); 
+     if (s_enable_sensation) push_sensation_window();
+     else push_summary_window();
      window_stack_remove(s_workout_window, false);
   }
 }
@@ -1513,7 +1537,8 @@ static void perform_finish_set() {
         play_vibe(s_ex_vibe);
       } else {
         vibes_double_pulse();
-        push_sensation_window(); 
+        if (s_enable_sensation) push_sensation_window();
+        else push_summary_window();
         window_stack_remove(s_workout_window, false);
         return;
       }
@@ -1540,7 +1565,8 @@ static void perform_finish_set() {
         play_vibe(s_ex_vibe);
       } else {
         vibes_double_pulse();
-        push_sensation_window(); 
+        if (s_enable_sensation) push_sensation_window();
+        else push_summary_window();
         window_stack_remove(s_workout_window, false);
         return;
       }
@@ -1550,7 +1576,7 @@ static void perform_finish_set() {
   Exercise *next_ex = &s_exercises[s_curr_ex_idx]; 
   init_temp_values(next_ex);
   
-   
+  s_edit_mode = 0; 
   
   if (s_rest_seconds_remaining > 0) {
     s_is_resting = true;
@@ -1650,7 +1676,6 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   #if !defined(PBL_ROUND)
   #if defined(PBL_HEALTH)
     
-    // V6.0 FIX: Reusing the hr_mask we already fetched at the top of the function!
     if (hr_mask & HealthServiceAccessibilityMaskNotSupported) {
         text_layer_set_text(s_hr_layer, ""); // Blank out the corner for Pebble Time / Original Pebble
     } else {
@@ -1668,7 +1693,7 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
 
   if (s_is_resting) {
     // V6.0 NEW: Live Ghost Pacer!
-    if (s_last_workout_sec > 0 && s_total_workout_sets > 0) {
+    if (s_enable_ghost && s_last_workout_sec > 0 && s_total_workout_sets > 0) {
         int expected_sec = (s_last_workout_sec * get_completed_sets()) / s_total_workout_sets;
         int diff = s_workout_sec - expected_sec;
         
@@ -2040,7 +2065,7 @@ static void workout_window_load(Window *window) {
   layer_set_update_proc(s_progress_layer, progress_update_proc);
   layer_add_child(w_layer, s_progress_layer);
 
-  s_edit_mode = 0;
+  s_edit_mode = 0; 
   if (s_rest_seconds_remaining > 0) {
     s_is_resting = true;
     set_rest_overlay_state(true, false);
