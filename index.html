@@ -157,9 +157,12 @@
         <h3 id="formTitle">Add Exercise</h3>
         <input type="text" id="exerciseSearch" placeholder="🔍 Search exercises..." oninput="filterExercises()">
         <select id="exerciseSelect"></select>
-        <input type="number" id="targetSets"   placeholder="Target Sets (e.g., 3)" min="1">
-        <input type="number" id="targetReps"   placeholder="Target Reps (e.g., 10)" min="1">
-        <input type="number" id="targetWeight" placeholder="Target Weight (0 for Bodyweight)" min="0">
+        <label id="labelTargetSets">Target Sets:</label>
+        <input type="number" id="targetSets"   placeholder="e.g., 3" min="1">
+        <label id="labelTargetReps">Target Reps:</label>
+        <input type="number" id="targetReps"   placeholder="e.g., 10" min="1">
+        <label id="labelTargetWeight">Target Weight:</label>
+        <input type="number" id="targetWeight" placeholder="e.g., 60 (0 for Bodyweight)" min="0">
         <label style="font-size:14px; font-weight:bold; margin-top:5px; display:block;">Advanced Modifier:</label>
         <select id="exerciseModifier" onchange="updateModifierDesc()">
             <option value="0">Normal Sets</option>
@@ -169,8 +172,10 @@
             <option value="6">Timed (Count up)</option>
         </select>
         <div id="modifierDesc" class="modifier-desc">Standard exercise execution with regular rest periods.</div>
-        <label style="font-size:14px; font-weight:bold; display:block;">Optional Note:</label>
-        <input type="text" id="exerciseComment" placeholder="e.g., Seat at 4, Pin at 3" maxlength="31">
+        <label style="font-size:14px; font-weight:bold; display:block;">
+            Optional Note: <span id="commentCounter" style="font-weight:normal; color:#aaa; font-size:12px;">0 / 31</span>
+        </label>
+        <input type="text" id="exerciseComment" placeholder="e.g., Seat at 4, Pin at 3" maxlength="31" oninput="updateCommentCounter()">
         <button id="addUpdateBtn" onclick="addExercise()">+ Add to Routine</button>
     </div>
 
@@ -179,6 +184,16 @@
         <p style="font-size:11px; color:gray; margin-top:0;">Drag and drop to reorder, or use the arrows on mobile.</p>
         <div id="routineList">
             <p style="color:gray; font-size:12px;">No exercises added yet.</p>
+        </div>
+        <div id="routineLengthBar" style="display:none; margin-top:8px;">
+            <div style="display:flex; justify-content:space-between; font-size:11px; color:#666; margin-bottom:3px;">
+                <span>Exercises</span>
+                <span id="routineLengthText">0 / 15</span>
+            </div>
+            <div style="background:#eee; border-radius:4px; height:6px;">
+                <div id="routineLengthFill" style="height:6px; border-radius:4px; background:var(--green); transition:width .3s, background .3s;"></div>
+            </div>
+            <p id="routineLengthWarning" style="display:none; font-size:11px; color:var(--red); margin:5px 0 0 0;">⚠️ Maximum of 15 exercises reached!</p>
         </div>
     </div>
 </div>
@@ -236,8 +251,6 @@
     <div class="card">
         <h3 style="margin-top:0;">Batch Routine Queue</h3>
         <p style="font-size:12px; color:gray; margin-top:0;">Prepare multiple routines and send an entire week to the watch at once.</p>
-        <button type="button" class="batch-btn" style="margin-top:10px;" onclick="document.getElementById('batchFile').click()">📂 Load Multiple Files (.json)</button>
-        <input type="file" id="batchFile" accept=".json" multiple style="display:none;" onchange="batchImport(event)">
         <div style="background:#fafafa; border:1px solid #ddd; border-radius:4px; margin-bottom:15px; padding:10px;">
             <h4 id="batchCount" style="margin-top:0; text-align:center; color:var(--teal);">0 / 7 Routines Prepared</h4>
             <div id="batchList">
@@ -248,14 +261,8 @@
     </div>
 
     <div class="card">
-        <h3 style="margin-top:0;">Desktop / File Backup</h3>
-        <div class="flex-row">
-            <button class="secondary-btn" onclick="document.getElementById('importFile').click()">Load (File)</button>
-            <button class="secondary-btn" onclick="exportJSON()">Save (File)</button>
-        </div>
-        <input type="file" id="importFile" accept=".json" style="display:none;" onchange="importJSON(event)">
-        <hr style="border:0; border-top:1px solid #eee; margin:15px 0;">
-        <p style="font-size:12px; color:gray; margin-top:0;">Text fallback for sharing or mobile backups.</p>
+        <h3 style="margin-top:0;">Import / Export via Text</h3>
+        <p style="font-size:12px; color:gray; margin-top:0;">Use this to back up a routine or transfer it from another device. Generate the text on one device, copy it, then paste and import on another.</p>
         <textarea id="routineTextArea" rows="3" style="font-family:monospace; font-size:11px; resize:vertical;" placeholder='{"n":"My Routine","e":[]}'></textarea>
         <div class="flex-row">
             <button type="button" class="small-btn secondary-btn" style="margin:0; flex:1;" onclick="exportToText()">1. Gen Text</button>
@@ -296,8 +303,9 @@
 
 <!-- ════════════ GLOBAL ACTION BUTTONS ════════════ -->
 <div id="global-actions" style="margin-bottom:40px;">
-    <button id="btn-add-batch"  class="batch-btn" onclick="addToBatch()">📦 + Add Current Routine to Batch</button>
-    <button id="btn-send-single" style="padding:15px; font-size:18px; width:100%; box-shadow:0 4px 6px rgba(0,0,0,.2);" onclick="saveAndSendSingle()">Save &amp; Send Single Routine to Watch</button>
+    <button id="btn-add-batch"    class="batch-btn" onclick="addToBatch()">📦 + Add Current Routine to Batch</button>
+    <button id="btn-send-single"  style="padding:15px; font-size:18px; width:100%; box-shadow:0 4px 6px rgba(0,0,0,.2);" onclick="saveAndSendSingle()">Save &amp; Send Single Routine to Watch</button>
+    <button id="btn-send-google"  style="display:none; padding:15px; font-size:18px; width:100%; box-shadow:0 4px 6px rgba(0,0,0,.2); background:var(--green);" onclick="saveAndSendSingle()">☁️ Save Google Settings to Watch</button>
 </div>
 
 <script>
@@ -306,9 +314,10 @@
 // ============================================================
 // CONSTANTS
 // ============================================================
-const MAX_BATCH     = 7;
-const MAX_ROUTINE_LEN = 1000;
-const MAX_HISTORY   = 30;
+const MAX_BATCH       = 7;
+const MAX_ROUTINE_LEN = 1300;  // real worst-case: 15 exercises × ~79 chars + name = ~1216
+const MAX_EXERCISES   = 15;    // mirrors #define MAX_EXERCISES in main.c
+const MAX_HISTORY     = 30;
 
 /** Modifier value → { label, badgeClass } */
 const MODIFIER_META = {
@@ -389,10 +398,10 @@ function switchTab(evt, tabId) {
     evt.currentTarget.classList.add('active');
 
     const showGlobal   = tabId === 'tab-builder' || tabId === 'tab-progression';
-    const addBatch     = document.getElementById('btn-add-batch');
-    const sendSingle   = document.getElementById('btn-send-single');
-    addBatch.style.display   = showGlobal ? 'block' : 'none';
-    sendSingle.style.display = showGlobal ? 'block' : 'none';
+    const showGoogle   = tabId === 'tab-history-cloud';
+    document.getElementById('btn-add-batch').style.display   = showGlobal  ? 'block' : 'none';
+    document.getElementById('btn-send-single').style.display = showGlobal  ? 'block' : 'none';
+    document.getElementById('btn-send-google').style.display = showGoogle  ? 'block' : 'none';
 }
 
 // ============================================================
@@ -516,6 +525,33 @@ function updateModifierDesc() {
     const desc = document.getElementById('modifierDesc');
     desc.innerHTML             = meta.desc;
     desc.style.borderLeftColor = meta.borderColor;
+
+    // UX: adapt form field labels and placeholders to the selected modifier
+    const isTimed    = val === '6';
+    const repsInput  = document.getElementById('targetReps');
+    const repsLabel  = document.getElementById('labelTargetReps');
+    const weightInput  = document.getElementById('targetWeight');
+    const weightLabel  = document.getElementById('labelTargetWeight');
+
+    if (isTimed) {
+        repsInput.placeholder    = 'e.g., 60';
+        repsLabel.textContent    = 'Target Seconds:';
+        weightInput.placeholder  = 'Not used for timed (enter 0)';
+        weightInput.value        = '0';
+        weightLabel.textContent  = 'Weight (ignored for timed):';
+        weightLabel.style.color  = '#aaa';
+        weightInput.style.color  = '#aaa';
+    } else {
+        repsInput.placeholder    = 'e.g., 10';
+        repsLabel.textContent    = 'Target Reps:';
+        // FIX 1: clear the auto-filled '0' when switching away from timed,
+        // unless the user has deliberately typed something other than '0'
+        if (weightInput.value === '0') weightInput.value = '';
+        weightInput.placeholder  = 'e.g., 60 (0 for Bodyweight)';
+        weightLabel.textContent  = 'Target Weight:';
+        weightLabel.style.color  = '';
+        weightInput.style.color  = '';
+    }
 }
 
 // ============================================================
@@ -551,8 +587,32 @@ function filterExercises() {
 }
 
 // ============================================================
-// RENDER ROUTINE LIST
+// SMALL UX HELPERS
 // ============================================================
+function updateCommentCounter() {
+    const len = document.getElementById('exerciseComment').value.length;
+    const counter = document.getElementById('commentCounter');
+    counter.textContent = `${len} / 31`;
+    counter.style.color = len > 25 ? 'var(--red)' : '#aaa';
+}
+
+function updateRoutineLengthBar() {
+    const count = myRoutine.length;
+    const pct   = (count / MAX_EXERCISES) * 100;
+    const bar   = document.getElementById('routineLengthBar');
+    const fill  = document.getElementById('routineLengthFill');
+    const text  = document.getElementById('routineLengthText');
+    const warn  = document.getElementById('routineLengthWarning');
+
+    if (count === 0) { bar.style.display = 'none'; return; }
+    bar.style.display     = 'block';
+    fill.style.width      = pct + '%';
+    fill.style.background = count >= MAX_EXERCISES ? 'var(--red)' : count >= 12 ? '#ffc107' : 'var(--green)';
+    text.textContent      = `${count} / ${MAX_EXERCISES}`;
+    warn.style.display    = count >= MAX_EXERCISES ? 'block' : 'none';
+}
+
+
 function renderRoutine() {
     const listDiv  = document.getElementById('routineList');
     if (myRoutine.length === 0) {
@@ -605,7 +665,7 @@ function renderRoutine() {
                 ${handle}
                 <div class="exercise-details">
                     <div style="line-height:1.2;margin-bottom:4px;"><strong>${ex[0]}</strong> ${badges}</div>
-                    <div>${ex[1]}s × ${ex[2]}r @ ${weight === 0 ? 'BW' : weight + 'kg'}</div>
+                    <div>${ex[1]}s × ${modifier === 6 ? ex[2] + 'sec' : ex[2] + 'r'} @ ${weight === 0 ? (modifier === 6 ? '—' : 'BW') : weight + 'kg'}</div>
                     ${comment}
                 </div>
             </div>
@@ -622,10 +682,12 @@ function renderRoutine() {
 
     listDiv.innerHTML = '';
     listDiv.appendChild(fragment);
+    updateRoutineLengthBar();
 }
 
 // ============================================================
 // DRAG & DROP
+// ============================================================
 // ============================================================
 function dragStart(e, index)         { draggedIndex = index; e.dataTransfer.effectAllowed = 'move'; }
 function dragOver(e, el)             { e.preventDefault(); el.classList.add('drag-over'); }
@@ -643,12 +705,25 @@ function drop(e, targetIndex, el) {
 // ADD / EDIT / DELETE EXERCISE
 // ============================================================
 function addExercise() {
-    const sets   = document.getElementById('targetSets').value;
-    const reps   = document.getElementById('targetReps').value;
-    const weight = document.getElementById('targetWeight').value;
+    const sets     = document.getElementById('targetSets').value;
+    const reps     = document.getElementById('targetReps').value;
+    const weight   = document.getElementById('targetWeight').value;
+    const modifier = parseInt(document.getElementById('exerciseModifier').value, 10);
+    const isTimed  = modifier === 6;
 
-    if (sets === '' || reps === '' || weight === '') {
-        alert('Please fill out sets, reps, and weight (use 0 for bodyweight)!');
+    if (sets === '' || reps === '') {
+        alert(isTimed
+            ? 'Please fill out sets and target seconds!'
+            : 'Please fill out sets, reps, and weight (use 0 for bodyweight)!');
+        return;
+    }
+    if (!isTimed && weight === '') {
+        alert('Please fill out target weight (use 0 for bodyweight)!');
+        return;
+    }
+    // Enforce the C-side MAX_EXERCISES limit (only on new adds, not edits)
+    if (editingIndex === -1 && myRoutine.length >= MAX_EXERCISES) {
+        alert(`Maximum of ${MAX_EXERCISES} exercises per routine reached.`);
         return;
     }
 
@@ -656,8 +731,8 @@ function addExercise() {
         document.getElementById('exerciseSelect').value,
         parseInt(sets, 10),
         parseInt(reps, 10),
-        parseInt(weight, 10),
-        parseInt(document.getElementById('exerciseModifier').value, 10),
+        isTimed ? 0 : parseInt(weight, 10),  // weight always 0 for timed
+        modifier,
         document.getElementById('exerciseComment').value.trim()
     ];
 
@@ -675,6 +750,7 @@ function addExercise() {
         document.getElementById(id).value = '';
     });
     document.getElementById('exerciseModifier').value = '0';
+    updateCommentCounter();
     renderExerciseDropdown();
     updateModifierDesc();
     renderRoutine();
@@ -699,6 +775,7 @@ function editExercise(index) {
     document.getElementById('targetWeight').value      = ex[3];
     document.getElementById('exerciseModifier').value  = ex.length > 4 ? ex[4] : '0';
     document.getElementById('exerciseComment').value   = ex.length > 5 ? ex[5] : '';
+    updateCommentCounter();
     updateModifierDesc();
     editingIndex = index;
     document.getElementById('formTitle').innerText    = 'Edit Exercise';
@@ -842,68 +919,9 @@ function sendBatchToPebble() {
     sendToPebble(buildConfigPayload(finalStr));
 }
 
-function batchImport(event) {
-    const files = event.target.files;
-    if (!files || files.length === 0) return;
-    if (batchRoutines.length + files.length > MAX_BATCH) {
-        alert(`Too many files! Your watch holds max ${MAX_BATCH} routines.`);
-        event.target.value = ''; return;
-    }
-    Array.from(files).forEach(file => {
-        const reader = new FileReader();
-        reader.onload = e => {
-            try {
-                const data = JSON.parse(e.target.result);
-                if (data.n && Array.isArray(data.e)) {
-                    let rStr = data.n;
-                    data.e.forEach(ex => {
-                        ex  = migrateLegacyExercise(ex);
-                        const mod = ex.length > 4 ? ex[4] : 0;
-                        const cmt = (ex.length > 5 && ex[5].trim() !== '') ? ex[5].trim() : '-';
-                        rStr += `|${ex[0]}|${ex[1]}|${ex[2]}|${ex[3]}|${mod}|${cmt}`;
-                    });
-                    batchRoutines.push({ name: data.n, dataStr: rStr });
-                    renderBatchUI();
-                } else { alert(`File '${file.name}' is invalid and was skipped.`); }
-            } catch { alert(`Error reading file: ${file.name}`); }
-        };
-        reader.readAsText(file);
-    });
-    event.target.value = '';
-}
-
 // ============================================================
-// FILE IMPORT / EXPORT
+// TEXT IMPORT / EXPORT
 // ============================================================
-function exportJSON() {
-    if (!validateRoutineForSend(document.getElementById('routineName').value || 'My Routine')) return;
-    const name = document.getElementById('routineName').value || 'My_Routine';
-    const data = { n: name, e: myRoutine.map(ex => [ex[0],ex[1],ex[2],ex[3],ex.length>4?ex[4]:0,ex.length>5?ex[5]:'']) };
-    const a = document.createElement('a');
-    a.href     = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(data));
-    a.download = name.replace(/\s+/g,'_') + '.json';
-    a.click();
-}
-
-function importJSON(event) {
-    const file = event.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = e => {
-        try {
-            const data = JSON.parse(e.target.result);
-            if (data.n && Array.isArray(data.e)) {
-                document.getElementById('routineName').value = data.n;
-                myRoutine = data.e.map(ex => { if (ex.length===4) ex.push(0); return migrateLegacyExercise(ex); });
-                renderRoutine();
-                alert('Routine loaded successfully!');
-            } else { alert('Invalid file format.'); }
-        } catch { alert('Error reading file.'); }
-        event.target.value = '';
-    };
-    reader.readAsText(file);
-}
-
 function exportToText() {
     document.getElementById('routineTextArea').value = JSON.stringify({
         n: document.getElementById('routineName').value || 'My Routine',
@@ -1076,8 +1094,9 @@ window.addEventListener('load', () => {
     loadSavedRoutines();
 
     // Show global action buttons (builder tab is default)
-    document.getElementById('btn-add-batch').style.display  = 'block';
+    document.getElementById('btn-add-batch').style.display   = 'block';
     document.getElementById('btn-send-single').style.display = 'block';
+    document.getElementById('btn-send-google').style.display = 'none';
 
     // Google status banner
     if (getQueryParam('googleUrl', '').trim()) {
