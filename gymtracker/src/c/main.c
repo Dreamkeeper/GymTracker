@@ -523,13 +523,17 @@ static void init_temp_values(Exercise *ex) {
     s_app.state.temp_reps = 0;
   } else {
     s_app.state.temp_reps = ex->target_reps;
-    if (ex->modifier == 1 && (ex->current_set % 2 == 0) && ex->target_weight == 0)
+    if (ex->modifier == 1 && (ex->current_set % 2 == 0) && ex->target_weight == 0) {
+      s_app.state.temp_reps = ex->actual_reps[ex->current_set - 2];
       s_app.state.temp_reps = (s_app.state.temp_reps * (100 - s_app.settings.drop_set_pct)) / 100;
+    }
   }
 
   int active_weight = ex->target_weight;
-  if (ex->modifier == 1 && (ex->current_set % 2 == 0) && ex->target_weight != 0)
+  if (ex->modifier == 1 && (ex->current_set % 2 == 0) && ex->target_weight != 0) {
+    active_weight = ex->actual_weight[ex->current_set - 2];
     active_weight = (active_weight * (100 - s_app.settings.drop_set_pct)) / 100;
+  }
   s_app.state.temp_weight = active_weight;
 }
 
@@ -1390,8 +1394,13 @@ static void summary_window_load(Window *window) {
       int t_w = s_app.state.exercises[i].target_weight;
 
       if (s_app.state.exercises[i].modifier == 1 && ((j + 1) % 2 == 0)) {
-        if (t_w == 0) t_r = (t_r * (100 - s_app.settings.drop_set_pct)) / 100;
-        else          t_w = (t_w * (100 - s_app.settings.drop_set_pct)) / 100;
+        if (t_w == 0) {
+            t_r = s_app.state.exercises[i].actual_reps[j - 1];
+            t_r = (t_r * (100 - s_app.settings.drop_set_pct)) / 100;
+        } else {
+            t_w = s_app.state.exercises[i].actual_weight[j - 1];
+            t_w = (t_w * (100 - s_app.settings.drop_set_pct)) / 100;
+        }
       }
 
       total_target_reps += t_r;
@@ -1970,8 +1979,13 @@ static void update_workout_ui(bool animate_box) {
   static char set_buf[32];
 
   if (ex->modifier == 1 && (ex->current_set % 2 == 0)) {
-    if (ex->target_weight == 0) active_target_reps   = (active_target_reps   * (100 - s_app.settings.drop_set_pct)) / 100;
-    else                        active_target_weight = (active_target_weight * (100 - s_app.settings.drop_set_pct)) / 100;
+    if (ex->target_weight == 0) {
+        active_target_reps = ex->actual_reps[ex->current_set - 2];
+        active_target_reps = (active_target_reps * (100 - s_app.settings.drop_set_pct)) / 100;
+    } else {
+        active_target_weight = ex->actual_weight[ex->current_set - 2];
+        active_target_weight = (active_target_weight * (100 - s_app.settings.drop_set_pct)) / 100;
+    }
     snprintf(set_buf, sizeof(set_buf), "Set %d of %d (DROP)", ex->current_set, ex->target_sets);
   } else if (ex->modifier == 3) {
     snprintf(set_buf, sizeof(set_buf), "Set %d of %d (WARM)", ex->current_set, ex->target_sets);
