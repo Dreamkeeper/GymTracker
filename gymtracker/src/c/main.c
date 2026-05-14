@@ -2044,11 +2044,13 @@ static void update_workout_ui(bool animate_box) {
 
 static void wo_up_click(ClickRecognizerRef r, void *ctx) {
   if (s_app.state.is_resting) return;
+  if (s_app.state.is_timed_active) return;
   if (s_app.state.edit_mode == 0) s_app.state.temp_reps++; else s_app.state.temp_weight++;
   update_workout_ui(false);
 }
 static void wo_down_click(ClickRecognizerRef r, void *ctx) {
   if (s_app.state.is_resting) return;
+  if (s_app.state.is_timed_active) return;
   if (s_app.state.edit_mode == 0 && s_app.state.temp_reps   > 0) s_app.state.temp_reps--;
   else if (s_app.state.edit_mode == 1 && s_app.state.temp_weight > 0) s_app.state.temp_weight--;
   update_workout_ui(false);

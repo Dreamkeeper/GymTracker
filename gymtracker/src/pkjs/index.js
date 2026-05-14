@@ -5,7 +5,7 @@
 // ============================================================
 var CONFIG = {
   isDevMode: false,
-  configUrlDev:  'https://oliverano95.github.io/GymTracker/index.html',
+  configUrlDev:  'https://oliverano95.github.io/GymTracker/index_dev.html',
   configUrlProd: 'https://oliverano95.github.io/GymTracker/',
   maxHistory: 30
 };
