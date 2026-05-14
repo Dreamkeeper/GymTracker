@@ -158,11 +158,11 @@
         <input type="text" id="exerciseSearch" placeholder="🔍 Search exercises..." oninput="filterExercises()">
         <select id="exerciseSelect"></select>
         <label id="labelTargetSets">Target Sets:</label>
-        <input type="number" id="targetSets"   placeholder="Target Sets (e.g., 3)" min="1">
+        <input type="number" id="targetSets"   placeholder="e.g., 3" min="1">
         <label id="labelTargetReps">Target Reps:</label>
-        <input type="number" id="targetReps"   placeholder="Target Reps (e.g., 10)" min="1">
+        <input type="number" id="targetReps"   placeholder="e.g., 10" min="1">
         <label id="labelTargetWeight">Target Weight:</label>
-        <input type="number" id="targetWeight" placeholder="Target Weight (0 for Bodyweight)" min="0">
+        <input type="number" id="targetWeight" placeholder="e.g., 60 (0 for Bodyweight)" min="0">
         <label style="font-size:14px; font-weight:bold; margin-top:5px; display:block;">Advanced Modifier:</label>
         <select id="exerciseModifier" onchange="updateModifierDesc()">
             <option value="0">Normal Sets</option>
@@ -534,7 +534,7 @@ function updateModifierDesc() {
     const weightLabel  = document.getElementById('labelTargetWeight');
 
     if (isTimed) {
-        repsInput.placeholder    = 'Target Seconds (e.g., 60)';
+        repsInput.placeholder    = 'e.g., 60';
         repsLabel.textContent    = 'Target Seconds:';
         weightInput.placeholder  = 'Not used for timed (enter 0)';
         weightInput.value        = '0';
@@ -542,12 +542,12 @@ function updateModifierDesc() {
         weightLabel.style.color  = '#aaa';
         weightInput.style.color  = '#aaa';
     } else {
-        repsInput.placeholder    = 'Target Reps (e.g., 10)';
+        repsInput.placeholder    = 'e.g., 10';
         repsLabel.textContent    = 'Target Reps:';
         // FIX 1: clear the auto-filled '0' when switching away from timed,
         // unless the user has deliberately typed something other than '0'
         if (weightInput.value === '0') weightInput.value = '';
-        weightInput.placeholder  = 'Target Weight (0 for Bodyweight)';
+        weightInput.placeholder  = 'e.g., 60 (0 for Bodyweight)';
         weightLabel.textContent  = 'Target Weight:';
         weightLabel.style.color  = '';
         weightInput.style.color  = '';
