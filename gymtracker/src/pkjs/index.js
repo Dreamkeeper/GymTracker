@@ -262,4 +262,56 @@ Pebble.addEventListener('appmessage', function(e) {
       }
     }
   }
+  // --- Voice Add Exercise Interceptor ---
+  if (payload.VOICE_ADD_EXERCISE) {
+    var spokenText = payload.VOICE_ADD_EXERCISE.toLowerCase();
+    console.log("Voice dictation received: " + spokenText);
+
+    // Convert written numbers to digits for easier regex matching
+    var numWords = { "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "fifteen": 15, "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50 };
+    for (var word in numWords) {
+      spokenText = spokenText.replace(new RegExp('\\b' + word + '\\b', 'gi'), numWords[word]);
+    }
+
+    var exerciseName = "Unknown Exercise";
+    var sets = 3;
+    var reps = 10;
+    var weight = 0;
+
+    // Parse Sets
+    var setsMatch = spokenText.match(/(\d+)\s*sets?/);
+    if (setsMatch) sets = parseInt(setsMatch[1], 10);
+
+    // Parse Reps
+    var repsMatch = spokenText.match(/(\d+)\s*reps?/);
+    if (!repsMatch) repsMatch = spokenText.match(/sets? of (\d+)/);
+    if (repsMatch) reps = parseInt(repsMatch[1], 10);
+
+    // Parse Weight
+    var weightMatch = spokenText.match(/(\d+)\s*(kilos?|kg|lbs?|pounds|weight)/);
+    if (weightMatch) {
+      weight = parseInt(weightMatch[1], 10);
+    } else if (spokenText.indexOf("bodyweight") !== -1 || spokenText.indexOf("body weight") !== -1) {
+      weight = 0;
+    }
+
+    // Extract the Name (Everything before the sets block)
+    var nameMatch = spokenText.match(/^(.*?)\s*\d+\s*sets?/);
+    if (nameMatch && nameMatch[1]) {
+      exerciseName = nameMatch[1].trim();
+    } else {
+      exerciseName = spokenText.substring(0, 20).trim(); // Fallback if user spoke improperly
+    }
+
+    // Capitalize first letter of each word
+    exerciseName = exerciseName.replace(/\b\w/g, function(l){ return l.toUpperCase(); });
+
+    var newExString = exerciseName + "|" + sets + "|" + reps + "|" + weight + "|0|-";
+
+    // Beam it back to the watch!
+    Pebble.sendAppMessage({ "NEW_EXERCISE_DATA": newExString },
+                          function() { console.log("Sent parsed exercise back: " + newExString); },
+                          function(err) { console.log("Failed to send parsed exercise: " + JSON.stringify(err)); }
+    );
+  }
 });

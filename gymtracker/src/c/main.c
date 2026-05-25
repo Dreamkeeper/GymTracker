@@ -108,26 +108,29 @@ typedef struct {
   bool is_paused;
   bool is_resting;
   bool is_timed_active;
-  int  rest_seconds_remaining;
+  int rest_seconds_remaining;
   char routine_name[32];
   Exercise exercises[MAX_EXERCISES];
-  int  total_exercises;
-  int  total_workout_sets;
-  int  current_slot;
-  int  curr_ex_idx;
-  int  workout_sec;
-  int  peak_hr;
-  int  total_hr;
-  int  hr_samples;
-  int  last_workout_sec;
-  int  edit_mode;
-  int  temp_reps;
-  int  temp_weight;
-  int  sensation;
-  int  cached_completed_sets; // OPT #4: cached to avoid per-second loop
-  bool hr_supported;          // OPT #2: checked once at workout start
-  bool is_24h;                // OPT #8: cached once at workout start
+  int total_exercises;
+  int total_workout_sets;
+  int current_slot;
+  int curr_ex_idx;
+  int workout_sec;
+  int peak_hr;
+  int total_hr;
+  int hr_samples;
+  int last_workout_sec;
+  int edit_mode;
+  int temp_reps;
+  int temp_weight;
+  int sensation;
+  int adding_exercise_to_slot;
+  int cached_completed_sets; // OPT #4: cached to avoid per-second loop
+  bool hr_supported;         // OPT #2: checked once at workout start
+  bool is_24h;               // OPT #8: cached once at workout start
   DictationSession *dictation_session;
+  DictationSession *new_ex_dictation_session;
+  Exercise pending_exercise;
 } WorkoutState;
 
 typedef struct {
@@ -136,6 +139,7 @@ typedef struct {
   int  active_slots;
   int  slot_to_edit;
   int  target_swap_slot;
+  int  exercise_to_edit;
 } AppStorage;
 
 typedef struct {
@@ -151,10 +155,11 @@ typedef struct {
   Window *main_window, *settings_window, *workout_window, *help_window, *confirm_window;
   Window *summary_window, *variation_window, *exit_window, *sensation_window;
   Window *action_window, *inspector_window, *mega_window, *note_window;
+  Window *confirm_add_window, *ex_action_window;
 
-  MenuLayer       *menu_layer, *settings_menu_layer, *variation_menu_layer;
-  MenuLayer       *sensation_menu_layer, *inspector_menu_layer;
-  SimpleMenuLayer *action_menu_layer, *mega_menu_layer;
+  MenuLayer *menu_layer, *settings_menu_layer, *variation_menu_layer;
+  MenuLayer *sensation_menu_layer, *inspector_menu_layer;
+  SimpleMenuLayer *action_menu_layer, *mega_menu_layer, *ex_action_menu_layer;
 
   Layer *main_header_bg, *settings_header_bg, *progress_layer, *workout_bg_layer;
   Layer *summary_bg_layer, *rest_overlay_layer, *highlight_layer;
@@ -166,18 +171,22 @@ typedef struct {
   TextLayer *exercise_layer, *next_exercise_layer, *set_layer, *label_reps_layer;
   TextLayer *label_weight_layer, *target_reps_layer, *target_weight_layer;
   TextLayer *actual_reps_layer, *actual_weight_layer, *help_text_layer;
-#if !defined(PBL_ROUND)
+
+  #if !defined(PBL_ROUND)
   TextLayer *hr_layer;
-#endif
+  #endif
+
   TextLayer *confirm_text_layer, *sum_title_layer, *sum_info_layer, *exit_text_layer;
   TextLayer *rest_title_layer, *rest_time_layer, *rest_skip_layer;
-  TextLayer *beat_layer, *missed_layer, *accuracy_layer, *density_layer;
-  TextLayer *note_text_layer;
+  TextLayer *beat_layer, *missed_layer, *accuracy_layer, *density_layer, *note_text_layer;
+  TextLayer *confirm_add_text_layer;
 
   SimpleMenuSection action_menu_sections[1];
-  SimpleMenuItem    action_menu_items[3];
+  SimpleMenuItem action_menu_items[4];
   SimpleMenuSection mega_menu_sections[1];
-  SimpleMenuItem    mega_menu_items[7];
+  SimpleMenuItem mega_menu_items[8];
+  SimpleMenuSection ex_action_menu_sections[1];
+  SimpleMenuItem ex_action_menu_items[3];
 } AppUI;
 
 typedef struct {
@@ -291,6 +300,12 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
 static int  get_completed_sets(void);
 static void refresh_directory(void);
 static void save_routine_to_slot(int slot_idx);
+
+static void new_exercise_dictation_callback(DictationSession *session, DictationSessionStatus status, char *transcription, void *context);
+static void action_quick_add_callback(int index, void *ctx);
+static void menu_quick_add_callback(int index, void *ctx);
+static void push_confirm_add_window(void);
+static void push_ex_action_window(void);
 
 // ========================================================================= //
 //                           5. CORE UTILITIES                               //
@@ -710,6 +725,17 @@ static void perform_voice_note(void) {
   dictation_session_start(s_app.state.dictation_session);
 }
 
+static void new_exercise_dictation_callback(DictationSession *session, DictationSessionStatus status, char *transcription, void *context) {
+  if (status == DictationSessionStatusSuccess) {
+    DictionaryIterator *iter;
+    if (app_message_outbox_begin(&iter) == APP_MSG_OK) {
+      dict_write_cstring(iter, MESSAGE_KEY_VOICE_ADD_EXERCISE, transcription);
+      app_message_outbox_send();
+      vibes_short_pulse();
+    }
+  }
+}
+
 static void execute_shortcut(int action_idx) {
   if (s_app.state.is_resting && action_idx != 4 && action_idx != 5 && action_idx != 6) return;
   switch (action_idx) {
@@ -726,6 +752,13 @@ static void execute_shortcut(int action_idx) {
     case 4: perform_finish_set(); break;
     case 5: perform_skip_set();   break;
     case 6: perform_voice_note(); break;
+    case 7:
+      s_app.state.adding_exercise_to_slot = s_app.state.current_slot;
+      if (!s_app.state.new_ex_dictation_session) {
+        s_app.state.new_ex_dictation_session = dictation_session_create(128, new_exercise_dictation_callback, NULL);
+      }
+      dictation_session_start(s_app.state.new_ex_dictation_session);
+      break;
   }
 }
 
@@ -931,7 +964,7 @@ static void settings_draw_row_callback(GContext *ctx, const Layer *cell_layer,
       }
     }
   } else if (cell_index->section == 4) {
-    static const char *actions[] = {"Variations","View Note","Swap (Later)","Skip Entirely","Finish Set","Skip Set","Voice Note"};
+    static const char *actions[] = {"Variations","View Note","Swap (Later)","Skip Entirely","Finish Set","Skip Set","Voice Note", "Add Ex. (Voice)"};
     switch (cell_index->row) {
       case 0: snprintf(title, sizeof(title), "Up Long Press");     snprintf(subtitle, sizeof(subtitle), "%s", actions[s_app.settings.shortcut_up]);     break;
       case 1: snprintf(title, sizeof(title), "Down Long Press");   snprintf(subtitle, sizeof(subtitle), "%s", actions[s_app.settings.shortcut_down]);   break;
@@ -1003,9 +1036,9 @@ static void settings_select_callback(MenuLayer *ml, MenuIndex *cell_index, void 
     }
   } else if (cell_index->section == 4) {
     switch (cell_index->row) {
-      case 0: s_app.settings.shortcut_up++;     if (s_app.settings.shortcut_up     > 6) s_app.settings.shortcut_up     = 0; save_setting(SK_SHORTCUT_UP,   s_app.settings.shortcut_up);     break;
-      case 1: s_app.settings.shortcut_down++;   if (s_app.settings.shortcut_down   > 6) s_app.settings.shortcut_down   = 0; save_setting(SK_SHORTCUT_DOWN, s_app.settings.shortcut_down);   break;
-      case 2: s_app.settings.shortcut_select++; if (s_app.settings.shortcut_select > 6) s_app.settings.shortcut_select = 0; save_setting(SK_SHORTCUT_SEL,  s_app.settings.shortcut_select); break;
+      case 0: s_app.settings.shortcut_up++;     if (s_app.settings.shortcut_up     > 7) s_app.settings.shortcut_up     = 0; save_setting(SK_SHORTCUT_UP,   s_app.settings.shortcut_up);     break;
+      case 1: s_app.settings.shortcut_down++;   if (s_app.settings.shortcut_down   > 7) s_app.settings.shortcut_down   = 0; save_setting(SK_SHORTCUT_DOWN, s_app.settings.shortcut_down);   break;
+      case 2: s_app.settings.shortcut_select++; if (s_app.settings.shortcut_select > 7) s_app.settings.shortcut_select = 0; save_setting(SK_SHORTCUT_SEL,  s_app.settings.shortcut_select); break;
     }
   }
   menu_layer_reload_data(s_app.ui.settings_menu_layer);
@@ -1246,6 +1279,89 @@ static void push_exit_window(void) {
   }
   window_set_background_color(s_app.ui.exit_window, get_bg_color());
   window_stack_push(s_app.ui.exit_window, true);
+}
+
+// --- Confirm Add Exercise Window ---
+static void confirm_add_up_click(ClickRecognizerRef recognizer, void *context) {
+  // User clicked YES - Execute the save logic!
+  int slot_idx = s_app.state.adding_exercise_to_slot;
+  RoutineHeader header;
+
+  if (persist_exists(STORAGE_KEY_BASE + slot_idx)) {
+    persist_read_data(STORAGE_KEY_BASE + slot_idx, &header, sizeof(RoutineHeader));
+
+    if (header.total_exercises < MAX_EXERCISES) {
+      persist_write_data(ROUTINE_EX_BASE + (slot_idx * MAX_EXERCISES) + header.total_exercises, &s_app.state.pending_exercise, sizeof(Exercise));
+      header.total_exercises++;
+      persist_write_data(STORAGE_KEY_BASE + slot_idx, &header, sizeof(RoutineHeader));
+
+      // Inject into live workout if currently active
+      if (s_app.state.active && s_app.state.current_slot == slot_idx) {
+        s_app.state.exercises[s_app.state.total_exercises] = s_app.state.pending_exercise;
+        s_app.state.total_exercises++;
+        s_app.state.total_workout_sets += s_app.state.pending_exercise.target_sets;
+
+        if (s_app.ui.workout_window) {
+          update_workout_ui(false);
+          layer_mark_dirty(s_app.ui.progress_layer);
+        }
+      }
+
+      refresh_directory();
+      if (s_app.ui.menu_layer) menu_layer_reload_data(s_app.ui.menu_layer);
+      if (s_app.ui.inspector_menu_layer) menu_layer_reload_data(s_app.ui.inspector_menu_layer);
+
+      vibes_short_pulse();
+    } else {
+      vibes_double_pulse(); // Max exercises reached
+    }
+  }
+  window_stack_pop(true);
+}
+
+static void confirm_add_down_click(ClickRecognizerRef recognizer, void *context) {
+  // User clicked NO / CANCEL
+  window_stack_pop(true);
+}
+
+static void confirm_add_click_provider(void *context) {
+  window_single_click_subscribe(BUTTON_ID_UP, confirm_add_up_click);
+  window_single_click_subscribe(BUTTON_ID_SELECT, confirm_add_up_click);
+  window_single_click_subscribe(BUTTON_ID_DOWN, confirm_add_down_click);
+  window_single_click_subscribe(BUTTON_ID_BACK, confirm_add_down_click);
+}
+
+static void confirm_add_window_load(Window *window) {
+  Layer *w_layer = window_get_root_layer(window);
+  GRect bounds = layer_get_bounds(w_layer);
+
+  s_app.ui.confirm_add_text_layer = build_text_layer(GRect(5, 5, bounds.size.w - 10, bounds.size.h - 5), FONT_KEY_GOTHIC_24_BOLD, GColorBlack, GTextAlignmentCenter, w_layer);
+
+  // Format the text nicely to show them what they dictated
+  static char conf_buf[128];
+  if (s_app.state.pending_exercise.target_weight == 0) {
+    snprintf(conf_buf, sizeof(conf_buf), "ADD EXERCISE?\n%s\n%d Sets x %d Reps\n(BW)\n\n[Select] Yes\n[Back] Cancel",
+             s_app.state.pending_exercise.name, s_app.state.pending_exercise.target_sets, s_app.state.pending_exercise.target_reps);
+  } else {
+    snprintf(conf_buf, sizeof(conf_buf), "ADD EXERCISE?\n%s\n%d Sets x %d Reps\n@ %d%s\n\n[Select] Yes\n[Back] Cancel",
+             s_app.state.pending_exercise.name, s_app.state.pending_exercise.target_sets, s_app.state.pending_exercise.target_reps,
+             s_app.state.pending_exercise.target_weight, s_app.settings.weight_unit_idx == 0 ? "kg" : "lbs");
+  }
+  text_layer_set_text(s_app.ui.confirm_add_text_layer, conf_buf);
+}
+
+static void confirm_add_window_unload(Window *window) {
+  text_layer_destroy(s_app.ui.confirm_add_text_layer);
+}
+
+static void push_confirm_add_window() {
+  if(!s_app.ui.confirm_add_window) {
+    s_app.ui.confirm_add_window = window_create();
+    window_set_click_config_provider(s_app.ui.confirm_add_window, confirm_add_click_provider);
+    window_set_window_handlers(s_app.ui.confirm_add_window, (WindowHandlers) { .load = confirm_add_window_load, .unload = confirm_add_window_unload });
+  }
+  window_set_background_color(s_app.ui.confirm_add_window, get_bg_color());
+  window_stack_push(s_app.ui.confirm_add_window, true);
 }
 
 // ----------- Sensation Window -----------
@@ -1629,6 +1745,178 @@ static void push_variation_window(void) {
   window_stack_push(s_app.ui.variation_window, true);
 }
 
+// ----------- Exercise Action Window -----------
+static void ex_action_move_up_callback(int index, void *ctx) {
+  if (s_app.storage.exercise_to_edit > 0) {
+    int slot = s_app.storage.slot_to_edit;
+    int ex_idx = s_app.storage.exercise_to_edit;
+
+    // Read the current and the previous exercise
+    Exercise ex1, ex2;
+    persist_read_data(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + ex_idx, &ex1, sizeof(Exercise));
+    persist_read_data(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + ex_idx - 1, &ex2, sizeof(Exercise));
+
+    // Swap them in permanent memory!
+    persist_write_data(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + ex_idx - 1, &ex1, sizeof(Exercise));
+    persist_write_data(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + ex_idx, &ex2, sizeof(Exercise));
+
+    // FIX: Synchronize live memory if the user is currently working out in this routine!
+    if (s_app.state.active && s_app.state.current_slot == slot) {
+      s_app.state.exercises[ex_idx - 1] = ex1;
+      s_app.state.exercises[ex_idx] = ex2;
+
+      // Track the pointer so the workout doesn't suddenly jump to the wrong exercise
+      if (s_app.state.curr_ex_idx == ex_idx) {
+        s_app.state.curr_ex_idx--;
+      } else if (s_app.state.curr_ex_idx == ex_idx - 1) {
+        s_app.state.curr_ex_idx++;
+      }
+      if (s_app.ui.workout_window) update_workout_ui(false);
+    }
+
+    s_app.storage.exercise_to_edit--;
+    vibes_short_pulse();
+    menu_layer_reload_data(s_app.ui.inspector_menu_layer);
+  }
+  window_stack_pop(true); // Return to the inspector
+}
+
+static void ex_action_move_down_callback(int index, void *ctx) {
+  int slot = s_app.storage.slot_to_edit;
+  if (s_app.storage.exercise_to_edit < s_app.storage.slot_counts[slot] - 1) {
+    int ex_idx = s_app.storage.exercise_to_edit;
+
+    Exercise ex1, ex2;
+    persist_read_data(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + ex_idx, &ex1, sizeof(Exercise));
+    persist_read_data(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + ex_idx + 1, &ex2, sizeof(Exercise));
+
+    persist_write_data(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + ex_idx + 1, &ex1, sizeof(Exercise));
+    persist_write_data(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + ex_idx, &ex2, sizeof(Exercise));
+
+    // FIX: Synchronize live memory if the user is currently working out in this routine!
+    if (s_app.state.active && s_app.state.current_slot == slot) {
+      s_app.state.exercises[ex_idx + 1] = ex1;
+      s_app.state.exercises[ex_idx] = ex2;
+
+      if (s_app.state.curr_ex_idx == ex_idx) {
+        s_app.state.curr_ex_idx++;
+      } else if (s_app.state.curr_ex_idx == ex_idx + 1) {
+        s_app.state.curr_ex_idx--;
+      }
+      if (s_app.ui.workout_window) update_workout_ui(false);
+    }
+
+    s_app.storage.exercise_to_edit++;
+    vibes_short_pulse();
+    menu_layer_reload_data(s_app.ui.inspector_menu_layer);
+  }
+  window_stack_pop(true);
+}
+
+static void ex_action_delete_callback(int index, void *ctx) {
+  int slot = s_app.storage.slot_to_edit;
+  int ex_idx = s_app.storage.exercise_to_edit;
+  RoutineHeader header;
+
+  persist_read_data(STORAGE_KEY_BASE + slot, &header, sizeof(RoutineHeader));
+
+  // Read the deleted exercise so we know how many sets to subtract later
+  Exercise deleted_ex;
+  persist_read_data(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + ex_idx, &deleted_ex, sizeof(Exercise));
+
+  // Shift everything below the deleted exercise UP by 1
+  for (int i = ex_idx; i < header.total_exercises - 1; i++) {
+    Exercise next_ex;
+    persist_read_data(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + i + 1, &next_ex, sizeof(Exercise));
+    persist_write_data(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + i, &next_ex, sizeof(Exercise));
+  }
+
+  // Delete the final dangling exercise
+  persist_delete(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + header.total_exercises - 1);
+
+  header.total_exercises--;
+  persist_write_data(STORAGE_KEY_BASE + slot, &header, sizeof(RoutineHeader));
+  s_app.storage.slot_counts[slot] = header.total_exercises;
+
+  // FIX: Synchronize live memory if the user is currently working out in this routine!
+  if (s_app.state.active && s_app.state.current_slot == slot) {
+    for (int i = ex_idx; i < s_app.state.total_exercises - 1; i++) {
+      s_app.state.exercises[i] = s_app.state.exercises[i + 1];
+    }
+    s_app.state.total_exercises--;
+    s_app.state.total_workout_sets -= deleted_ex.target_sets;
+
+    // Shift the active workout UI safely
+    if (s_app.state.curr_ex_idx > ex_idx) {
+      s_app.state.curr_ex_idx--;
+    } else if (s_app.state.curr_ex_idx == ex_idx) {
+      if (s_app.state.curr_ex_idx >= s_app.state.total_exercises) {
+        s_app.state.curr_ex_idx = s_app.state.total_exercises > 0 ? s_app.state.total_exercises - 1 : 0;
+      }
+
+      // If they deleted the very last exercise mid-workout, exit safely!
+      if (s_app.state.total_exercises > 0) {
+        init_temp_values(&s_app.state.exercises[s_app.state.curr_ex_idx]);
+      } else {
+        window_stack_remove(s_app.ui.workout_window, false);
+        s_app.state.active = false;
+      }
+    }
+
+    if (s_app.state.active && s_app.ui.workout_window) {
+      update_workout_ui(false);
+      layer_mark_dirty(s_app.ui.progress_layer);
+    }
+  }
+
+  vibes_double_pulse();
+  menu_layer_reload_data(s_app.ui.inspector_menu_layer);
+  menu_layer_reload_data(s_app.ui.menu_layer); // Update the main menu count too
+  window_stack_pop(true);
+}
+
+static void ex_action_window_load(Window *window) {
+  int num_items = 0;
+  s_app.ui.ex_action_menu_items[num_items++] = (SimpleMenuItem){ .title = "Move Up",   .callback = ex_action_move_up_callback };
+  s_app.ui.ex_action_menu_items[num_items++] = (SimpleMenuItem){ .title = "Move Down", .callback = ex_action_move_down_callback };
+  s_app.ui.ex_action_menu_items[num_items++] = (SimpleMenuItem){ .title = "Delete",    .callback = ex_action_delete_callback };
+
+  // Use a static buffer so the title doesn't disappear when the function returns!
+  static char ex_title_buf[32];
+  Exercise temp_ex;
+  persist_read_data(ROUTINE_EX_BASE + (s_app.storage.slot_to_edit * MAX_EXERCISES) + s_app.storage.exercise_to_edit, &temp_ex, sizeof(Exercise));
+  snprintf(ex_title_buf, sizeof(ex_title_buf), "%s", temp_ex.name);
+
+  s_app.ui.ex_action_menu_sections[0] = (SimpleMenuSection){
+    .title = ex_title_buf,
+    .num_items = num_items, .items = s_app.ui.ex_action_menu_items,
+  };
+
+  Layer *w_layer = window_get_root_layer(window);
+  GRect bounds   = layer_get_frame(w_layer);
+
+  s_app.ui.ex_action_menu_layer = simple_menu_layer_create(bounds, window, s_app.ui.ex_action_menu_sections, 1, NULL);
+  MenuLayer *internal = simple_menu_layer_get_menu_layer(s_app.ui.ex_action_menu_layer);
+  menu_layer_set_normal_colors(internal,    get_bg_color(), get_text_color());
+  menu_layer_set_highlight_colors(internal, get_theme_color(), get_bg_color());
+
+  layer_add_child(w_layer, simple_menu_layer_get_layer(s_app.ui.ex_action_menu_layer));
+}
+
+static void ex_action_window_unload(Window *window) {
+  simple_menu_layer_destroy(s_app.ui.ex_action_menu_layer);
+}
+
+static void push_ex_action_window(void) {
+  if (!s_app.ui.ex_action_window) {
+    s_app.ui.ex_action_window = window_create();
+    window_set_window_handlers(s_app.ui.ex_action_window,
+                               (WindowHandlers){ .load = ex_action_window_load, .unload = ex_action_window_unload });
+  }
+  window_set_background_color(s_app.ui.ex_action_window, get_bg_color());
+  window_stack_push(s_app.ui.ex_action_window, true);
+}
+
 // ----------- Inspector Window -----------
 static uint16_t inspector_get_num_rows_callback(MenuLayer *ml, uint16_t section, void *data) {
   return (uint16_t)s_app.storage.slot_counts[s_app.storage.slot_to_edit];
@@ -1647,6 +1935,10 @@ static void inspector_draw_row_callback(GContext *ctx, const Layer *cell_layer,
              s_app.settings.weight_unit_idx == 0 ? "kg" : "lbs");
   menu_cell_basic_draw(ctx, cell_layer, temp_ex.name, subtitle, NULL);
 }
+static void inspector_select_callback(MenuLayer *ml, MenuIndex *cell_index, void *data) {
+  s_app.storage.exercise_to_edit = cell_index->row;
+  push_ex_action_window();
+}
 static void inspector_window_load(Window *window) {
   Layer *w_layer = window_get_root_layer(window);
   GRect bounds   = layer_get_bounds(w_layer);
@@ -1654,6 +1946,7 @@ static void inspector_window_load(Window *window) {
   menu_layer_set_callbacks(s_app.ui.inspector_menu_layer, NULL, (MenuLayerCallbacks){
     .get_num_rows = inspector_get_num_rows_callback,
     .draw_row     = inspector_draw_row_callback,
+    .select_click = inspector_select_callback,
   });
   menu_layer_set_normal_colors(s_app.ui.inspector_menu_layer,    get_bg_color(), get_text_color());
   menu_layer_set_highlight_colors(s_app.ui.inspector_menu_layer, get_theme_color(), get_bg_color());
@@ -1685,6 +1978,7 @@ static void action_window_load(Window *window) {
   int num_items = 0;
   s_app.ui.action_menu_items[num_items++] = (SimpleMenuItem){ .title = "Start Workout",  .callback = action_start_callback };
   s_app.ui.action_menu_items[num_items++] = (SimpleMenuItem){ .title = "View Exercises", .callback = action_inspect_callback };
+  s_app.ui.action_menu_items[num_items++] = (SimpleMenuItem){ .title = "Add Ex. (Voice)", .callback = action_quick_add_callback };
   s_app.ui.action_menu_items[num_items++] = (SimpleMenuItem){ .title = "Move / Delete",  .callback = action_edit_callback };
   s_app.ui.action_menu_sections[0] = (SimpleMenuSection){
     .title = s_app.storage.slot_names[s_app.storage.slot_to_edit],
@@ -1697,6 +1991,14 @@ static void action_window_load(Window *window) {
   menu_layer_set_normal_colors(internal,    get_bg_color(), get_text_color());
   menu_layer_set_highlight_colors(internal, get_theme_color(), get_bg_color());
   layer_add_child(w_layer, simple_menu_layer_get_layer(s_app.ui.action_menu_layer));
+}
+static void action_quick_add_callback(int index, void *ctx) {
+  window_stack_remove(s_app.ui.action_window, false);
+  s_app.state.adding_exercise_to_slot = s_app.storage.slot_to_edit;
+  if (!s_app.state.new_ex_dictation_session) {
+    s_app.state.new_ex_dictation_session = dictation_session_create(128, new_exercise_dictation_callback, NULL);
+  }
+  dictation_session_start(s_app.state.new_ex_dictation_session);
 }
 static void action_window_unload(Window *window) { simple_menu_layer_destroy(s_app.ui.action_menu_layer); }
 static void push_action_window(void) {
@@ -1740,7 +2042,6 @@ static void menu_skip_callback(int index, void *ctx)      { window_stack_remove(
 static void menu_finish_callback(int index, void *ctx)    { window_stack_remove(s_app.ui.mega_window, false); perform_finish_set(); }
 static void menu_skip_set_callback(int index, void *ctx)  { window_stack_remove(s_app.ui.mega_window, false); perform_skip_set(); }
 static void menu_voice_callback(int index, void *ctx)     { window_stack_remove(s_app.ui.mega_window, false); perform_voice_note(); }
-
 static void mega_window_load(Window *window) {
   int n = 0;
   s_app.ui.mega_menu_items[n++] = (SimpleMenuItem){ .title = "Finish Set",             .subtitle = "Log & progress workout",    .callback = menu_finish_callback };
@@ -1755,6 +2056,7 @@ static void mega_window_load(Window *window) {
   s_app.ui.mega_menu_items[n++] = (SimpleMenuItem){ .title = "Do Later (Swap)",         .subtitle = "Swap with next exercise",        .callback = menu_swap_callback };
   s_app.ui.mega_menu_items[n++] = (SimpleMenuItem){ .title = "Skip Set (Log 0)",        .subtitle = "Progress to next set",           .callback = menu_skip_set_callback };
   s_app.ui.mega_menu_items[n++] = (SimpleMenuItem){ .title = "Skip Exercise (Log 0)",   .subtitle = "Progress to next exercise",      .callback = menu_skip_callback };
+  s_app.ui.mega_menu_items[n++] = (SimpleMenuItem){ .title = "Add Ex. (Voice)", .subtitle = "Append to routine", .callback = menu_quick_add_callback };
 
   s_app.ui.mega_menu_sections[0] = (SimpleMenuSection){ .num_items = n, .items = s_app.ui.mega_menu_items };
 
@@ -1766,8 +2068,15 @@ static void mega_window_load(Window *window) {
   menu_layer_set_highlight_colors(internal, get_theme_color(), get_bg_color());
   layer_add_child(w_layer, simple_menu_layer_get_layer(s_app.ui.mega_menu_layer));
 }
+static void menu_quick_add_callback(int index, void *ctx) {
+  window_stack_remove(s_app.ui.mega_window, false);
+  s_app.state.adding_exercise_to_slot = s_app.state.current_slot;
+  if (!s_app.state.new_ex_dictation_session) {
+    s_app.state.new_ex_dictation_session = dictation_session_create(128, new_exercise_dictation_callback, NULL);
+  }
+  dictation_session_start(s_app.state.new_ex_dictation_session);
+}
 static void mega_window_unload(Window *window) { simple_menu_layer_destroy(s_app.ui.mega_menu_layer); }
-
 static void push_note_window(void) {
   if (!s_app.ui.note_window) {
     s_app.ui.note_window = window_create();
@@ -1777,7 +2086,6 @@ static void push_note_window(void) {
   window_set_background_color(s_app.ui.note_window, get_bg_color());
   window_stack_push(s_app.ui.note_window, true);
 }
-
 static void push_mega_window(void) {
   if (!s_app.ui.mega_window) {
     s_app.ui.mega_window = window_create();
@@ -2453,10 +2761,10 @@ static void main_window_unload(Window *window) {
 //                        10. APP MESSAGE (INBOX)                            //
 // ========================================================================= //
 static void inbox_received_callback(DictionaryIterator *iterator, void *context) {
+
+  // ----------- Handle full routines sent from phone -----------
   Tuple *routine_data_tuple = dict_find(iterator, MESSAGE_KEY_ROUTINE_DATA);
   if (routine_data_tuple && routine_data_tuple->type == TUPLE_CSTRING) {
-    // FIX #5: copy inbox data to a local buffer before mutating;
-    // the AppMessage inbox buffer is read-only and must not be written to.
     static char inbox_copy[EXPORT_BUF_SIZE];
     strncpy(inbox_copy, routine_data_tuple->value->cstring, sizeof(inbox_copy) - 1);
     inbox_copy[sizeof(inbox_copy) - 1] = '\0';
@@ -2504,6 +2812,7 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
     menu_layer_reload_data(s_app.ui.menu_layer);
   }
 
+  // ----------- Handle progression settings updates -----------
   Tuple *prog_mode_tuple = dict_find(iterator, MESSAGE_KEY_PROGRESSION_MODE);
   if (prog_mode_tuple) {
     s_app.settings.progression_mode = prog_mode_tuple->value->int32;
@@ -2514,6 +2823,47 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
   if (weight_inc_tuple) {
     s_app.settings.weight_increment = weight_inc_tuple->value->int32;
     persist_write_int(SETTINGS_KEY_BASE + SK_WEIGHT_INC, s_app.settings.weight_increment);
+  }
+
+  // ----------- Catch single parsed voice exercise from phone -----------
+  Tuple *new_ex_tuple = dict_find(iterator, MESSAGE_KEY_NEW_EXERCISE_DATA);
+  if (new_ex_tuple) {
+    char *new_ex_str = new_ex_tuple->value->cstring;
+
+    Exercise ex;
+    memset(&ex, 0, sizeof(Exercise));
+
+    char temp[32];
+    int field = 0, t_idx = 0;
+
+    // Unpack the phone's parsed string (e.g. "Bicep Curls|3|10|15|0|-")
+    for (int i = 0; new_ex_str[i] != '\0'; i++) {
+      if (new_ex_str[i] == '|') {
+        temp[t_idx] = '\0';
+        if (field == 0) snprintf(ex.name, sizeof(ex.name), "%s", temp);
+        else if (field == 1) ex.target_sets = atoi(temp);
+        else if (field == 2) ex.target_reps = atoi(temp);
+        else if (field == 3) ex.target_weight = atoi(temp);
+        else if (field == 4) ex.modifier = atoi(temp);
+        field++;
+        t_idx = 0;
+      } else {
+        if (t_idx < 31) temp[t_idx++] = new_ex_str[i];
+      }
+    }
+    temp[t_idx] = '\0';
+    if (field == 5) {
+      if (strcmp(temp, "-") == 0) ex.comment[0] = '\0';
+      else snprintf(ex.comment, sizeof(ex.comment), "%s", temp);
+    }
+
+    // Initialize runtime variables
+    ex.current_set = 1;
+    for(int j=0; j<10; j++) { ex.actual_reps[j] = 0; ex.actual_weight[j] = 0; }
+
+    // Hold it in memory and ask the user!
+    s_app.state.pending_exercise = ex;
+    push_confirm_add_window();
   }
 }
 
@@ -2579,9 +2929,15 @@ static void deinit(void) {
   if (s_app.ui.note_window)      { window_destroy(s_app.ui.note_window);      s_app.ui.note_window      = NULL; }
   if (s_app.ui.action_window)    { window_destroy(s_app.ui.action_window);    s_app.ui.action_window    = NULL; }
   if (s_app.ui.inspector_window) { window_destroy(s_app.ui.inspector_window); s_app.ui.inspector_window = NULL; }
+  if (s_app.ui.ex_action_window) { window_destroy(s_app.ui.ex_action_window); s_app.ui.ex_action_window = NULL; }
+  if (s_app.ui.confirm_add_window) { window_destroy(s_app.ui.confirm_add_window); s_app.ui.confirm_add_window = NULL; }
   if (s_app.state.dictation_session) {
     dictation_session_destroy(s_app.state.dictation_session);
     s_app.state.dictation_session = NULL;
+  }
+  if (s_app.state.new_ex_dictation_session) {
+    dictation_session_destroy(s_app.state.new_ex_dictation_session);
+    s_app.state.new_ex_dictation_session = NULL;
   }
 
   window_destroy(s_app.ui.main_window);
