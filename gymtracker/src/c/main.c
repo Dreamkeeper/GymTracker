@@ -41,7 +41,8 @@ typedef enum {
   SK_DYNAMIC_HR    = 18,
   SK_ENABLE_GHOST  = 19,
   SK_ENABLE_SENS   = 20,
-  SK_HR_RATE       = 22,  // HR sample interval in minutes: 1, 2, 5, 10
+  SK_HR_RATE       = 22,
+  SK_SWAP_UI       = 23,
 } SettingsKey;
 
 // ========================================================================= //
@@ -74,7 +75,7 @@ typedef struct {
   int  modifier;
   int  current_set;
   int  actual_reps[10];
-  bool dirty;  // OPT #5: true if progression changed this exercise
+  bool dirty;
 } Exercise;
 
 typedef struct {
@@ -99,7 +100,8 @@ typedef struct {
   int weight_increment;
   int enable_ghost;
   int enable_sensation;
-  int hr_sample_rate;   // HR sample interval in minutes (1, 2, 5, 10)
+  int hr_sample_rate;
+  int swap_reps_weight;
 } AppSettings;
 
 typedef struct {
@@ -207,7 +209,7 @@ static GymTrackerApp s_app = {
     .long_press_ms = 500, .drop_set_pct = 20, .last_routine_slot = 0, .dark_mode = 0,
     .shortcut_up = 1, .shortcut_down = 2, .shortcut_select = 4, .dynamic_hr_target = 0,
     .progression_mode = -1, .weight_increment = 2, .enable_ghost = 1, .enable_sensation = 1,
-    .hr_sample_rate = 1
+    .hr_sample_rate = 1, .swap_reps_weight = 0
   },
   .state = {
     .active = false, .has_resume = false, .is_paused = false, .is_resting = false,
@@ -404,6 +406,7 @@ static void load_settings(void) {
   if (persist_exists(SETTINGS_KEY_BASE + SK_ENABLE_GHOST))s_app.settings.enable_ghost     = persist_read_int(SETTINGS_KEY_BASE + SK_ENABLE_GHOST);
   if (persist_exists(SETTINGS_KEY_BASE + SK_ENABLE_SENS)) s_app.settings.enable_sensation = persist_read_int(SETTINGS_KEY_BASE + SK_ENABLE_SENS);
   if (persist_exists(SETTINGS_KEY_BASE + SK_HR_RATE))     s_app.settings.hr_sample_rate   = persist_read_int(SETTINGS_KEY_BASE + SK_HR_RATE);
+  if (persist_exists(SETTINGS_KEY_BASE + SK_SWAP_UI))     s_app.settings.swap_reps_weight = persist_read_int(SETTINGS_KEY_BASE + SK_SWAP_UI);
 }
 
 static void save_setting(SettingsKey key, int value) {
@@ -579,7 +582,6 @@ static void swap_exercise(void) {
 }
 
 static void perform_true_skip(void) {
-  // FIX #6: guard against out-of-bounds curr_ex_idx
   if (s_app.state.curr_ex_idx >= s_app.state.total_exercises) return;
 
   Exercise *ex = &s_app.state.exercises[s_app.state.curr_ex_idx];
@@ -610,11 +612,11 @@ static void perform_true_skip(void) {
   if (s_app.state.curr_ex_idx + 1 < s_app.state.total_exercises) {
     s_app.state.curr_ex_idx++;
     init_temp_values(&s_app.state.exercises[s_app.state.curr_ex_idx]);
-    s_app.state.cached_completed_sets = get_completed_sets();  // OPT #4
+    s_app.state.cached_completed_sets = get_completed_sets();
     s_app.state.is_resting = false;
     layer_set_hidden(s_app.ui.rest_overlay_layer, true);
-    s_app.state.edit_mode = 0;
-    layer_mark_dirty(s_app.ui.progress_layer);  // OPT #6
+    s_app.state.edit_mode = (s_app.state.exercises[s_app.state.curr_ex_idx].target_weight == 0) ? 0 : s_app.settings.swap_reps_weight;
+    layer_mark_dirty(s_app.ui.progress_layer);
     update_workout_ui(true);
   } else {
     vibes_double_pulse();
@@ -627,7 +629,6 @@ static void perform_true_skip(void) {
 static void perform_finish_set(void) {
   if (s_app.state.is_resting) { skip_rest(); return; }
 
-  // FIX #6: guard against out-of-bounds
   if (s_app.state.curr_ex_idx >= s_app.state.total_exercises) return;
 
   Exercise *ex = &s_app.state.exercises[s_app.state.curr_ex_idx];
@@ -689,14 +690,14 @@ static void perform_finish_set(void) {
   }
 
   init_temp_values(&s_app.state.exercises[s_app.state.curr_ex_idx]);
-  s_app.state.edit_mode = 0;
-  s_app.state.cached_completed_sets = get_completed_sets();  // OPT #4
+  s_app.state.edit_mode = (s_app.state.exercises[s_app.state.curr_ex_idx].target_weight == 0) ? 0 : s_app.settings.swap_reps_weight;
+  s_app.state.cached_completed_sets = get_completed_sets();
 
   if (s_app.state.rest_seconds_remaining > 0) {
     s_app.state.is_resting = true;
     set_rest_overlay_state(true, true);
   }
-  layer_mark_dirty(s_app.ui.progress_layer);  // OPT #6: only redraw progress on set completion
+  layer_mark_dirty(s_app.ui.progress_layer);
   update_workout_ui(false);
 }
 
@@ -779,7 +780,6 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
       }
     }
 
-    // OPT #3: only reformat and push the timer text when the value actually changed
     int m = s_app.state.workout_sec / 60;
     int s = s_app.state.workout_sec % 60;
     static char time_buf[16];
@@ -787,14 +787,12 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
     text_layer_set_text(s_app.ui.timer_layer, time_buf);
   }
 
-  // OPT #2: hr_supported checked once at workout_window_load; just peek here.
   HealthValue current_hr = 0;
 #if defined(PBL_HEALTH)
   if (s_app.state.hr_supported)
     current_hr = health_service_peek_current_value(HealthMetricHeartRateBPM);
 #endif
 
-  // OPT #4 / OPT #8: per-minute block uses cached is_24h; HR sampled on
   // user-configured interval (hr_sample_rate minutes).
   static int s_last_minute = -1;
   if (tick_time->tm_min != s_last_minute) {
@@ -802,12 +800,10 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
     s_last_minute = tick_time->tm_min;
 
     static char clock_buf[16];
-    // OPT #8: use cached is_24h flag set once at workout start
     if (s_app.state.is_24h) strftime(clock_buf, sizeof(clock_buf), "%H:%M", tick_time);
     else                     strftime(clock_buf, sizeof(clock_buf), "%I:%M", tick_time);
     text_layer_set_text(s_app.ui.clock_layer, clock_buf);
 
-    // OPT #2: only sample HR on the user-configured interval
     bool hr_sample_tick = (tick_time->tm_min % s_app.settings.hr_sample_rate == 0);
     if (hr_sample_tick && current_hr > 0) {
       if (current_hr > (HealthValue)s_app.state.peak_hr) s_app.state.peak_hr = (int)current_hr;
@@ -831,7 +827,6 @@ static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   if (s_app.state.is_resting) {
     if (s_app.settings.enable_ghost && s_app.state.last_workout_sec > 0 &&
         s_app.state.total_workout_sets > 0) {
-      // OPT #4: use cached completed-sets count, not a live loop
       int expected_sec = (s_app.state.last_workout_sec * s_app.state.cached_completed_sets) /
                           s_app.state.total_workout_sets;
       int diff     = s_app.state.workout_sec - expected_sec;
@@ -891,7 +886,7 @@ static uint16_t settings_get_num_rows_callback(MenuLayer *ml, uint16_t section, 
   if (section == 0) return 5;
   if (section == 1) return 3;
   if (section == 2) return 1;
-  if (section == 3) return 7;
+  if (section == 3) return 8;
   if (section == 4) return 3;
   return 0;
 }
@@ -962,6 +957,10 @@ static void settings_draw_row_callback(GContext *ctx, const Layer *cell_layer,
         snprintf(subtitle, sizeof(subtitle), "%s", hr_rates[rate_idx]);
         break;
       }
+      case 7:
+        snprintf(title, sizeof(title), "UI Layout");
+        snprintf(subtitle, sizeof(subtitle), s_app.settings.swap_reps_weight ? "Weight | Reps" : "Reps | Weight");
+        break;
     }
   } else if (cell_index->section == 4) {
     static const char *actions[] = {"Variations","View Note","Swap (Later)","Skip Entirely","Finish Set","Skip Set","Voice Note", "Add Ex. (Voice)"};
@@ -1013,7 +1012,6 @@ static void settings_select_callback(MenuLayer *ml, MenuIndex *cell_index, void 
         s_app.settings.dark_mode++;
         if (s_app.settings.dark_mode > 2) s_app.settings.dark_mode = 0;
         save_setting(SK_DARK_MODE, s_app.settings.dark_mode);
-        // FIX #11: immediately refresh cache when user changes dark mode
         { time_t now = time(NULL); struct tm *t = localtime(&now); update_dark_theme_cache(t); }
         window_set_background_color(s_app.ui.settings_window, get_bg_color());
         menu_layer_set_normal_colors(s_app.ui.settings_menu_layer,    get_bg_color(), get_text_color());
@@ -1033,6 +1031,10 @@ static void settings_select_callback(MenuLayer *ml, MenuIndex *cell_index, void 
         save_setting(SK_HR_RATE, s_app.settings.hr_sample_rate);
         break;
       }
+      case 7:
+        s_app.settings.swap_reps_weight = !s_app.settings.swap_reps_weight;
+        save_setting(SK_SWAP_UI, s_app.settings.swap_reps_weight);
+        break;
     }
   } else if (cell_index->section == 4) {
     switch (cell_index->row) {
@@ -2175,16 +2177,21 @@ static void animate_highlight_box(bool animated) {
   } else { offset_x = 20; }
 #endif
 
-  // FIX #6: guard before array access
   bool is_bw = (s_app.state.curr_ex_idx < s_app.state.total_exercises)
                ? (s_app.state.exercises[s_app.state.curr_ex_idx].target_weight == 0) : false;
   int center_x;
+
   if (is_bw) {
     center_x = bounds.size.w / 2;
   } else {
-    center_x = (s_app.state.edit_mode == 0)
-               ? ((half_w / 2) + offset_x)
-               : ((half_w + (half_w / 2)) - offset_x);
+    int left_center = (half_w / 2) + offset_x;
+    int right_center = (half_w + (half_w / 2)) - offset_x;
+
+    // Determine which side is Reps and which is Weight based on settings
+    int reps_center = s_app.settings.swap_reps_weight ? right_center : left_center;
+    int weight_center = s_app.settings.swap_reps_weight ? left_center : right_center;
+
+    center_x = (s_app.state.edit_mode == 0) ? reps_center : weight_center;
   }
 
   int layer_w = s_app.geom.highlight_box_width + 8;
@@ -2252,7 +2259,6 @@ static void set_rest_overlay_state(bool is_resting, bool animated) {
 }
 
 static void update_workout_ui(bool animate_box) {
-  // FIX #6: guard before any array access
   if (s_app.state.curr_ex_idx >= s_app.state.total_exercises) return;
 
   Exercise *ex   = &s_app.state.exercises[s_app.state.curr_ex_idx];
@@ -2323,17 +2329,29 @@ static void update_workout_ui(bool animate_box) {
   int offset_x = 0;
 #if defined(PBL_ROUND)
   offset_x = (bounds.size.h <= 180) ? 10 : 20;
-#endif
+ #endif
   int half_w = bounds.size.w / 2;
+
+  // Determine physical X coordinates
+  int left_x = offset_x;
+  int right_x = half_w - offset_x;
+
+  // Route Reps and Weight to Left/Right based on the user setting
+  int reps_x = s_app.settings.swap_reps_weight ? right_x : left_x;
+  int weight_x = s_app.settings.swap_reps_weight ? left_x : right_x;
 
   if (is_bw) {
     layer_set_frame(text_layer_get_layer(s_app.ui.label_reps_layer),  GRect(0, s_app.geom.labels_y, bounds.size.w, 20));
     layer_set_frame(text_layer_get_layer(s_app.ui.actual_reps_layer), GRect(0, s_app.geom.actual_y,  bounds.size.w, 40));
     layer_set_frame(text_layer_get_layer(s_app.ui.target_reps_layer), GRect(0, s_app.geom.target_y,  bounds.size.w, 22));
   } else {
-    layer_set_frame(text_layer_get_layer(s_app.ui.label_reps_layer),  GRect(offset_x,        s_app.geom.labels_y, half_w, 20));
-    layer_set_frame(text_layer_get_layer(s_app.ui.actual_reps_layer), GRect(offset_x,        s_app.geom.actual_y,  half_w, 40));
-    layer_set_frame(text_layer_get_layer(s_app.ui.target_reps_layer), GRect(offset_x,        s_app.geom.target_y,  half_w, 22));
+    layer_set_frame(text_layer_get_layer(s_app.ui.label_reps_layer),  GRect(reps_x, s_app.geom.labels_y, half_w, 20));
+    layer_set_frame(text_layer_get_layer(s_app.ui.actual_reps_layer), GRect(reps_x, s_app.geom.actual_y,  half_w, 40));
+    layer_set_frame(text_layer_get_layer(s_app.ui.target_reps_layer), GRect(reps_x, s_app.geom.target_y,  half_w, 22));
+
+    layer_set_frame(text_layer_get_layer(s_app.ui.label_weight_layer),  GRect(weight_x, s_app.geom.labels_y, half_w, 20));
+    layer_set_frame(text_layer_get_layer(s_app.ui.actual_weight_layer), GRect(weight_x, s_app.geom.actual_y,  half_w, 40));
+    layer_set_frame(text_layer_get_layer(s_app.ui.target_weight_layer), GRect(weight_x, s_app.geom.target_y,  half_w, 22));
   }
 
   GColor active_color   = get_theme_color();
@@ -2360,7 +2378,6 @@ static void update_workout_ui(bool animate_box) {
   if (s_app.geom.highlight_box_width > half_w - 4) s_app.geom.highlight_box_width = half_w - 4;
 
   text_layer_set_text_color(s_app.ui.rest_time_layer, active_color);
-  // OPT #6: progress bar only redraws when a set completes (see perform_finish_set / perform_true_skip)
   animate_highlight_box(animate_box);
 }
 
@@ -2529,10 +2546,9 @@ static void workout_window_load(Window *window) {
   layer_set_update_proc(s_app.ui.progress_layer, progress_update_proc);
   layer_add_child(w_layer, s_app.ui.progress_layer);
 
-  s_app.state.edit_mode = 0;
-  s_app.state.cached_completed_sets = 0;  // OPT #4: initialise cache
+  s_app.state.edit_mode = (s_app.state.exercises[s_app.state.curr_ex_idx].target_weight == 0) ? 0 : s_app.settings.swap_reps_weight;
+  s_app.state.cached_completed_sets = 0;
 
-  // OPT #2: check HR sensor availability once here, not every second
 #if defined(PBL_HEALTH)
   {
     HealthServiceAccessibilityMask mask = health_service_metric_accessible(
@@ -2543,7 +2559,6 @@ static void workout_window_load(Window *window) {
   s_app.state.hr_supported = false;
 #endif
 
-  // OPT #8: cache 24h preference once — never changes during a session
   s_app.state.is_24h = clock_is_24h_style();
 
   if (s_app.state.rest_seconds_remaining > 0) {
