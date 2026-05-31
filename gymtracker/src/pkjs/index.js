@@ -7,7 +7,7 @@ var CONFIG = {
   isDevMode: false,
   configUrlDev:  'https://oliverano95.github.io/GymTracker/index_dev.html',
   configUrlProd: 'https://oliverano95.github.io/GymTracker/',
-  maxHistory: 30
+  maxHistory: 15
 };
 
 // ============================================================
@@ -161,14 +161,36 @@ Pebble.addEventListener('ready', function() {
 Pebble.addEventListener('showConfiguration', function() {
   var baseUrl = CONFIG.isDevMode ? CONFIG.configUrlDev : CONFIG.configUrlProd;
 
-  var params = [
-    'googleUrl='  + encodeURIComponent(Storage.get('googleUrl',      '')),
-    'googlePwd='  + encodeURIComponent(Storage.get('googlePwd',      '')),
-    'history='    + encodeURIComponent(Storage.get('workoutHistory', '[]')),
-    'sync='       + encodeURIComponent(Storage.get('synced_routines', '{}'))
-  ];
+  var googleUrl = Storage.get('googleUrl', '');
+  var googlePwd = Storage.get('googlePwd', '');
+  var syncedRoutines = Storage.get('synced_routines', '{}');
+  var historyArr = Storage.getJSON('workoutHistory', []);
 
-  Pebble.openURL(baseUrl + '?' + params.join('&'));
+  var url = '';
+  var SAFE_URL_LIMIT = 7000; // GitHub Pages rejects URLs over ~8KB, so we leave breathing room
+
+  // Dynamically trim history to ensure the URL never exceeds the server limit
+  while (historyArr.length >= 0) {
+    var params = [
+      'googleUrl='  + encodeURIComponent(googleUrl),
+                        'googlePwd='  + encodeURIComponent(googlePwd),
+                        'history='    + encodeURIComponent(JSON.stringify(historyArr)),
+                        'sync='       + encodeURIComponent(syncedRoutines)
+    ];
+
+    url = baseUrl + '?' + params.join('&');
+
+    // If it fits, or if we have deleted all history, break the loop and send it
+    if (url.length <= SAFE_URL_LIMIT || historyArr.length === 0) {
+      break;
+    }
+
+    // URL is too long! Remove the oldest workout from this payload and try again.
+    historyArr.shift();
+  }
+
+  console.log('Opening config page. Final URL length: ' + url.length);
+  Pebble.openURL(url);
 });
 
 // 3. Configuration web page closed
