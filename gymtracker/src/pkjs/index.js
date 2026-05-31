@@ -115,10 +115,10 @@ function parseRoutineString(syncString) {
     exercises.push({
       name:      parts[i],
       sets:      parseInt(parts[i + 1], 10),
-      reps:      parseInt(parts[i + 2], 10),
-      weight:    parseInt(parts[i + 3], 10),
-      modifier:  parseInt(parts[i + 4], 10),
-      comment:   parts[i + 5] === '-' ? '' : parts[i + 5]
+                   reps:      parseInt(parts[i + 2], 10),
+                   weight:    parseInt(parts[i + 3], 10),
+                   modifier:  parseInt(parts[i + 4], 10),
+                   comment:   parts[i + 5] === '-' ? '' : parts[i + 5]
     });
   }
 
@@ -161,32 +161,44 @@ Pebble.addEventListener('ready', function() {
 Pebble.addEventListener('showConfiguration', function() {
   var baseUrl = CONFIG.isDevMode ? CONFIG.configUrlDev : CONFIG.configUrlProd;
 
-  var googleUrl = Storage.get('googleUrl', '');
-  var googlePwd = Storage.get('googlePwd', '');
+  var googleUrl      = Storage.get('googleUrl', '');
+  var googlePwd      = Storage.get('googlePwd', '');
   var syncedRoutines = Storage.get('synced_routines', '{}');
-  var historyArr = Storage.getJSON('workoutHistory', []);
+  var historyArr     = Storage.getJSON('workoutHistory', []);
 
+  var SAFE_URL_LIMIT = 7000; // GitHub Pages rejects URLs over ~8KB
+
+  // Build the URL, trimming history from oldest first until it fits.
+  // NOTE: loop condition must be `> 0` not `>= 0` — an array length is
+  // always >= 0 so `>= 0` is an infinite loop (the bug in 6.6.1).
   var url = '';
-  var SAFE_URL_LIMIT = 7000; // GitHub Pages rejects URLs over ~8KB, so we leave breathing room
-
-  // Dynamically trim history to ensure the URL never exceeds the server limit
-  while (historyArr.length >= 0) {
+  while (true) {
     var params = [
-      'googleUrl='  + encodeURIComponent(googleUrl),
-                        'googlePwd='  + encodeURIComponent(googlePwd),
-                        'history='    + encodeURIComponent(JSON.stringify(historyArr)),
-                        'sync='       + encodeURIComponent(syncedRoutines)
+      'googleUrl=' + encodeURIComponent(googleUrl),
+                        'googlePwd=' + encodeURIComponent(googlePwd),
+                        'history='   + encodeURIComponent(JSON.stringify(historyArr)),
+                        'sync='      + encodeURIComponent(syncedRoutines)
     ];
-
     url = baseUrl + '?' + params.join('&');
 
-    // If it fits, or if we have deleted all history, break the loop and send it
-    if (url.length <= SAFE_URL_LIMIT || historyArr.length === 0) {
+    if (url.length <= SAFE_URL_LIMIT) break;  // fits — send it
+
+    if (historyArr.length > 0) {
+      // Still too long — drop the oldest workout and try again
+      historyArr.shift();
+    } else {
+      // History exhausted but URL still too long (very large sync dict).
+      // Drop synced routines from the URL as a last resort.
+      console.log('Warning: URL too long after clearing history. Dropping sync data from URL.');
+      syncedRoutines = '{}';
+      url = baseUrl + '?' + [
+        'googleUrl=' + encodeURIComponent(googleUrl),
+                        'googlePwd=' + encodeURIComponent(googlePwd),
+                        'history='   + encodeURIComponent('[]'),
+                        'sync='      + encodeURIComponent('{}')
+      ].join('&');
       break;
     }
-
-    // URL is too long! Remove the oldest workout from this payload and try again.
-    historyArr.shift();
   }
 
   console.log('Opening config page. Final URL length: ' + url.length);
@@ -245,8 +257,8 @@ Pebble.addEventListener('webviewclosed', function(e) {
 
   if (Object.keys(appMessageData).length > 0) {
     Pebble.sendAppMessage(appMessageData,
-      function()    { console.log('Data sent to watch successfully.'); },
-      function(err) { console.log('Failed to send data to watch: ' + JSON.stringify(err)); }
+                          function()    { console.log('Data sent to watch successfully.'); },
+                          function(err) { console.log('Failed to send data to watch: ' + JSON.stringify(err)); }
     );
   }
 });
@@ -284,56 +296,56 @@ Pebble.addEventListener('appmessage', function(e) {
       }
     }
   }
-  // --- Voice Add Exercise Interceptor ---
+
+  // --- Voice Add Exercise: parse spoken text and beam a new exercise back to the watch ---
   if (payload.VOICE_ADD_EXERCISE) {
     var spokenText = payload.VOICE_ADD_EXERCISE.toLowerCase();
-    console.log("Voice dictation received: " + spokenText);
+    console.log('Voice dictation received: ' + spokenText);
 
     // Convert written numbers to digits for easier regex matching
-    var numWords = { "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "fifteen": 15, "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50 };
+    var numWords = {
+      'one':1,'two':2,'three':3,'four':4,'five':5,'six':6,'seven':7,
+      'eight':8,'nine':9,'ten':10,'eleven':11,'twelve':12,
+      'fifteen':15,'twenty':20,'thirty':30,'forty':40,'fifty':50
+    };
     for (var word in numWords) {
       spokenText = spokenText.replace(new RegExp('\\b' + word + '\\b', 'gi'), numWords[word]);
     }
 
-    var exerciseName = "Unknown Exercise";
-    var sets = 3;
-    var reps = 10;
-    var weight = 0;
+    var exerciseName = 'Unknown Exercise';
+    var sets = 3, reps = 10, weight = 0;
 
-    // Parse Sets
-    var setsMatch = spokenText.match(/(\d+)\s*sets?/);
+    var setsMatch   = spokenText.match(/(\d+)\s*sets?/);
     if (setsMatch) sets = parseInt(setsMatch[1], 10);
 
-    // Parse Reps
-    var repsMatch = spokenText.match(/(\d+)\s*reps?/);
+    var repsMatch   = spokenText.match(/(\d+)\s*reps?/);
     if (!repsMatch) repsMatch = spokenText.match(/sets? of (\d+)/);
-    if (repsMatch) reps = parseInt(repsMatch[1], 10);
+    if (repsMatch)  reps = parseInt(repsMatch[1], 10);
 
-    // Parse Weight
-    var weightMatch = spokenText.match(/(\d+)\s*(kilos?|kg|lbs?|pounds|weight)/);
+    var weightMatch = spokenText.match(/(\d+)\s*(kilos?|kg|lbs?|pounds?|weight)/);
     if (weightMatch) {
       weight = parseInt(weightMatch[1], 10);
-    } else if (spokenText.indexOf("bodyweight") !== -1 || spokenText.indexOf("body weight") !== -1) {
+    } else if (spokenText.indexOf('bodyweight') !== -1 || spokenText.indexOf('body weight') !== -1) {
       weight = 0;
     }
 
-    // Extract the Name (Everything before the sets block)
     var nameMatch = spokenText.match(/^(.*?)\s*\d+\s*sets?/);
     if (nameMatch && nameMatch[1]) {
       exerciseName = nameMatch[1].trim();
     } else {
-      exerciseName = spokenText.substring(0, 20).trim(); // Fallback if user spoke improperly
+      exerciseName = spokenText.substring(0, 20).trim();
     }
 
-    // Capitalize first letter of each word
-    exerciseName = exerciseName.replace(/\b\w/g, function(l){ return l.toUpperCase(); });
+    // Capitalise first letter of each word
+    exerciseName = exerciseName.replace(/\b\w/g, function(l) { return l.toUpperCase(); });
 
-    var newExString = exerciseName + "|" + sets + "|" + reps + "|" + weight + "|0|-";
+    var newExString = exerciseName + '|' + sets + '|' + reps + '|' + weight + '|0|-';
+    console.log('Parsed exercise: ' + newExString);
 
-    // Beam it back to the watch!
-    Pebble.sendAppMessage({ "NEW_EXERCISE_DATA": newExString },
-                          function() { console.log("Sent parsed exercise back: " + newExString); },
-                          function(err) { console.log("Failed to send parsed exercise: " + JSON.stringify(err)); }
+    Pebble.sendAppMessage(
+      { 'NEW_EXERCISE_DATA': newExString },
+      function()    { console.log('Sent parsed exercise back: ' + newExString); },
+                          function(err) { console.log('Failed to send parsed exercise: ' + JSON.stringify(err)); }
     );
   }
 });

@@ -1303,15 +1303,22 @@ static void confirm_add_up_click(ClickRecognizerRef recognizer, void *context) {
         s_app.state.total_exercises++;
         s_app.state.total_workout_sets += s_app.state.pending_exercise.target_sets;
 
-        if (s_app.ui.workout_window) {
+        // FIX: Safely check if the workout window is ACTUALLY loaded on screen
+        if (s_app.ui.workout_window && window_is_loaded(s_app.ui.workout_window)) {
           update_workout_ui(false);
-          layer_mark_dirty(s_app.ui.progress_layer);
+          if (s_app.ui.progress_layer) layer_mark_dirty(s_app.ui.progress_layer);
         }
       }
 
       refresh_directory();
-      if (s_app.ui.menu_layer) menu_layer_reload_data(s_app.ui.menu_layer);
-      if (s_app.ui.inspector_menu_layer) menu_layer_reload_data(s_app.ui.inspector_menu_layer);
+
+      // FIX: Only attempt to reload menus if their parent windows are currently alive
+      if (s_app.ui.menu_layer && window_is_loaded(s_app.ui.main_window)) {
+        menu_layer_reload_data(s_app.ui.menu_layer);
+      }
+      if (s_app.ui.inspector_menu_layer && window_is_loaded(s_app.ui.inspector_window)) {
+        menu_layer_reload_data(s_app.ui.inspector_menu_layer);
+      }
 
       vibes_short_pulse();
     } else {
@@ -1955,7 +1962,10 @@ static void inspector_window_load(Window *window) {
   menu_layer_set_click_config_onto_window(s_app.ui.inspector_menu_layer, window);
   layer_add_child(w_layer, menu_layer_get_layer(s_app.ui.inspector_menu_layer));
 }
-static void inspector_window_unload(Window *window) { menu_layer_destroy(s_app.ui.inspector_menu_layer); }
+static void inspector_window_unload(Window *window) {
+  menu_layer_destroy(s_app.ui.inspector_menu_layer);
+  s_app.ui.inspector_menu_layer = NULL; // FIX: Prevent dangling pointer
+}
 static void push_inspector_window(void) {
   if (!s_app.ui.inspector_window) {
     s_app.ui.inspector_window = window_create();
