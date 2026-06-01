@@ -14,6 +14,7 @@
 #define ROUTINE_EX_BASE    1000
 #define V5_MIGRATION_KEY   500
 #define GHOST_KEY_BASE     800
+#define LAST_COMPLETED_KEY_BASE 900
 
 #define NUM_VARIATIONS 9
 
@@ -138,6 +139,7 @@ typedef struct {
 typedef struct {
   char slot_names[MAX_SLOTS][32];
   int  slot_counts[MAX_SLOTS];
+  int  last_completed[MAX_SLOTS];
   int  active_slots;
   int  slot_to_edit;
   int  target_swap_slot;
@@ -469,6 +471,16 @@ static void parse_routine_string(const char *data) {
     s_app.state.total_workout_sets += s_app.state.exercises[k].target_sets;
 }
 
+static void format_relative_time(char *buf, size_t size, int timestamp) {
+  int diff = (int)time(NULL) - timestamp;
+  if      (diff < 60)       snprintf(buf, size, "just now");
+  else if (diff < 3600)     snprintf(buf, size, "%dm ago", diff / 60);
+  else if (diff < 86400)    snprintf(buf, size, "%dh ago", diff / 3600);
+  else if (diff < 604800)   snprintf(buf, size, "%dd ago", diff / 86400);
+  else if (diff < 2592000)  snprintf(buf, size, "%dw ago", diff / 604800);
+  else                      snprintf(buf, size, "%dmo ago", diff / 2592000);
+}
+
 static void refresh_directory(void) {
   s_app.storage.active_slots = 0;
   RoutineHeader header;
@@ -486,12 +498,20 @@ static void refresh_directory(void) {
           persist_delete(ROUTINE_EX_BASE + (i * MAX_EXERCISES) + j);
         }
         persist_delete(STORAGE_KEY_BASE + i);
+        if (persist_exists(LAST_COMPLETED_KEY_BASE + i)) {
+          persist_write_int(LAST_COMPLETED_KEY_BASE + s_app.storage.active_slots,
+                            persist_read_int(LAST_COMPLETED_KEY_BASE + i));
+          persist_delete(LAST_COMPLETED_KEY_BASE + i);
+        }
       }
 
       snprintf(s_app.storage.slot_names[s_app.storage.active_slots],
                sizeof(s_app.storage.slot_names[s_app.storage.active_slots]),
                "%s", header.name);
       s_app.storage.slot_counts[s_app.storage.active_slots] = header.total_exercises;
+      s_app.storage.last_completed[s_app.storage.active_slots] =
+        persist_exists(LAST_COMPLETED_KEY_BASE + s_app.storage.active_slots)
+        ? persist_read_int(LAST_COMPLETED_KEY_BASE + s_app.storage.active_slots) : 0;
       s_app.storage.active_slots++;
     }
   }
@@ -499,6 +519,7 @@ static void refresh_directory(void) {
   for (int i = s_app.storage.active_slots; i < MAX_SLOTS; i++) {
     snprintf(s_app.storage.slot_names[i], sizeof(s_app.storage.slot_names[i]), "Empty Slot");
     s_app.storage.slot_counts[i] = 0;
+    s_app.storage.last_completed[i] = 0;
   }
 }
 
@@ -1168,6 +1189,7 @@ static void edit_select_click(ClickRecognizerRef recognizer, void *context) {
     persist_delete(STORAGE_KEY_BASE + s_app.storage.slot_to_edit);
     for (int j = 0; j < MAX_EXERCISES; j++)
       persist_delete(ROUTINE_EX_BASE + (s_app.storage.slot_to_edit * MAX_EXERCISES) + j);
+    persist_delete(LAST_COMPLETED_KEY_BASE + s_app.storage.slot_to_edit);
   } else {
     RoutineHeader edit_header, target_header;
     bool target_exists = persist_exists(STORAGE_KEY_BASE + s_app.storage.target_swap_slot);
@@ -1193,6 +1215,27 @@ static void edit_select_click(ClickRecognizerRef recognizer, void *context) {
 
       if (t_exists) persist_write_data(ROUTINE_EX_BASE + (s_app.storage.slot_to_edit   * MAX_EXERCISES) + j, &target_ex, sizeof(Exercise));
       else          persist_delete(    ROUTINE_EX_BASE + (s_app.storage.slot_to_edit   * MAX_EXERCISES) + j);
+    }
+
+    // Swap last_completed timestamps
+    bool has_edit_ts   = persist_exists(LAST_COMPLETED_KEY_BASE + s_app.storage.slot_to_edit);
+    bool has_target_ts = target_exists && persist_exists(LAST_COMPLETED_KEY_BASE + s_app.storage.target_swap_slot);
+
+    int edit_ts   = has_edit_ts   ? persist_read_int(LAST_COMPLETED_KEY_BASE + s_app.storage.slot_to_edit)   : 0;
+    int target_ts = has_target_ts ? persist_read_int(LAST_COMPLETED_KEY_BASE + s_app.storage.target_swap_slot) : 0;
+
+    if (has_edit_ts)
+      persist_write_int(LAST_COMPLETED_KEY_BASE + s_app.storage.target_swap_slot, edit_ts);
+    else
+      persist_delete(LAST_COMPLETED_KEY_BASE + s_app.storage.target_swap_slot);
+
+    if (target_exists) {
+      if (has_target_ts)
+        persist_write_int(LAST_COMPLETED_KEY_BASE + s_app.storage.slot_to_edit, target_ts);
+      else
+        persist_delete(LAST_COMPLETED_KEY_BASE + s_app.storage.slot_to_edit);
+    } else {
+      persist_delete(LAST_COMPLETED_KEY_BASE + s_app.storage.slot_to_edit);
     }
   }
   refresh_directory();
@@ -1458,6 +1501,8 @@ static void summary_window_load(Window *window) {
 
   if (s_app.state.workout_sec > 0)
     persist_write_int(GHOST_KEY_BASE + s_app.state.current_slot, s_app.state.workout_sec);
+
+  persist_write_int(LAST_COMPLETED_KEY_BASE + s_app.state.current_slot, (int)time(NULL));
 
   Layer *w_layer = window_get_root_layer(window);
   GRect bounds   = layer_get_bounds(w_layer);
@@ -2642,7 +2687,13 @@ static void menu_draw_row_callback(GContext *ctx, const Layer *cell_layer, MenuI
   }
   if (i < s_app.storage.active_slots) {
     static char subtitle[32];
-    snprintf(subtitle, sizeof(subtitle), "%d exercises", s_app.storage.slot_counts[i]);
+    if (s_app.storage.last_completed[i] > 0) {
+      char relative[16];
+      format_relative_time(relative, sizeof(relative), s_app.storage.last_completed[i]);
+      snprintf(subtitle, sizeof(subtitle), "%d ex • %s", s_app.storage.slot_counts[i], relative);
+    } else {
+      snprintf(subtitle, sizeof(subtitle), "%d exercises", s_app.storage.slot_counts[i]);
+    }
     menu_cell_basic_draw(ctx, cell_layer, s_app.storage.slot_names[i], subtitle, NULL);
   } else if (i == s_app.storage.active_slots && s_app.storage.active_slots < MAX_SLOTS) {
     menu_cell_basic_draw(ctx, cell_layer, "Add New Routine", "Send to save here", NULL);
@@ -2799,6 +2850,7 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
         persist_delete(STORAGE_KEY_BASE + i);
         for (int j = 0; j < MAX_EXERCISES; j++)
           persist_delete(ROUTINE_EX_BASE + (i * MAX_EXERCISES) + j);
+        persist_delete(LAST_COMPLETED_KEY_BASE + i);
       }
       s_app.storage.active_slots = 0;
 
