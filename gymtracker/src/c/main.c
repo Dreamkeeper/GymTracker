@@ -1453,8 +1453,12 @@ static void push_sensation_window(void) {
 
 // ----------- Summary Window -----------
 static void summary_exit_click(ClickRecognizerRef recognizer, void *context) {
-  // OPT #7: destroy these windows on the way back to main menu
   if (s_app.ui.sensation_window) { window_destroy(s_app.ui.sensation_window); s_app.ui.sensation_window = NULL; }
+
+  if (s_app.ui.menu_layer) {
+    menu_layer_reload_data(s_app.ui.menu_layer);
+  }
+
   window_stack_pop(true);
   // summary_window itself will be destroyed by deinit or next workout start
 }
@@ -1491,7 +1495,6 @@ static void summary_bg_update_proc(Layer *layer, GContext *ctx) {
 }
 
 static void summary_window_load(Window *window) {
-  // FIX #10: unsubscribe happens here (only once, at workout end), not in workout_window_unload
   tick_timer_service_unsubscribe();
 
   s_app.state.active = false;
@@ -1499,10 +1502,13 @@ static void summary_window_load(Window *window) {
   s_app.settings.last_routine_slot = s_app.state.current_slot;
   persist_write_int(SETTINGS_KEY_BASE + SK_LAST_SLOT, s_app.settings.last_routine_slot);
 
-  if (s_app.state.workout_sec > 0)
+  if (s_app.state.workout_sec > 0) {
     persist_write_int(GHOST_KEY_BASE + s_app.state.current_slot, s_app.state.workout_sec);
 
-  persist_write_int(LAST_COMPLETED_KEY_BASE + s_app.state.current_slot, (int)time(NULL));
+    persist_write_int(LAST_COMPLETED_KEY_BASE + s_app.state.current_slot, (int)time(NULL));
+
+    s_app.storage.last_completed[s_app.state.current_slot] = (int)time(NULL);
+  }
 
   Layer *w_layer = window_get_root_layer(window);
   GRect bounds   = layer_get_bounds(w_layer);
