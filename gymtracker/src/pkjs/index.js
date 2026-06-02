@@ -78,8 +78,9 @@ function saveWorkoutLocally(rawData) {
   var history = Storage.getJSON('workoutHistory', []);
   history.push({ timestamp: new Date().getTime(), data: rawData });
 
-  // Cap history so the config URL never gets too long to load
-  if (history.length > CONFIG.maxHistory) history.shift();
+  while (history.length > CONFIG.maxHistory) {
+    history.shift();
+  }
 
   Storage.setJSON('workoutHistory', history);
   console.log('Workout saved locally. History count: ' + history.length);
