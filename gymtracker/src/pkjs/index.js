@@ -4,9 +4,9 @@
 // CONFIGURATION
 // ============================================================
 var CONFIG = {
-  isDevMode: true,
-  configUrlDev:  'https://silentjay.github.io/solid-lamp/index.html',
-  configUrlProd: 'https://silentjay.github.io/solid-lamp/',
+  isDevMode: false,
+  configUrlDev:  'https://oliverano95.github.io/GymTracker/index_dev.html',
+  configUrlProd: 'https://oliverano95.github.io/GymTracker/',
   maxHistory: 15
 };
 
