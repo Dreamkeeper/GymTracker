@@ -1037,6 +1037,42 @@ window.addEventListener('load', () => {
     catch { workoutHistory = []; }
     renderHistory();
 
+    // Auto-load progressed routine from watch sync, if available
+    try {
+        const syncParam = getQueryParam('sync', '{}');
+        const syncedDict = JSON.parse(syncParam);
+        const activeName = document.getElementById('routineName').value;
+        const syncStr = syncedDict[activeName];
+        if (syncStr) {
+            const parts = syncStr.split('|');
+            let startIndex = 1;
+            if (PROGRESSION_TOKENS.has(parts[1])) {
+                document.getElementById('progressionMode').value = parts[1];
+                document.getElementById('weightIncrement').value = parts[2];
+                updateProgressionUI();
+                startIndex = 3;
+            }
+            myRoutine = [];
+            for (let i = startIndex; i < parts.length; i += 6) {
+                if (!parts[i] || i + 5 >= parts.length) break;
+                myRoutine.push([
+                    parts[i],
+                    parseInt(parts[i+1], 10),
+                    parseInt(parts[i+2], 10),
+                    parseInt(parts[i+3], 10),
+                    parseInt(parts[i+4], 10),
+                    parts[i+5] === '-' ? '' : parts[i+5]
+                ]);
+            }
+            renderRoutine();
+            saveRoutineToStorage(
+                activeName,
+                myRoutine,
+                document.getElementById('progressionMode').value,
+                document.getElementById('weightIncrement').value
+            );
+        }
+    } catch {}
 });
 </script>
 </body>
