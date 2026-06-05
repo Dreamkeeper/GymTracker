@@ -227,22 +227,6 @@
             Progression is disabled. Your targets will remain exactly as you set them.
         </div>
 
-        <hr style="border:0; border-top:1px solid #eee; margin:15px 0;">
-        <h4 style="margin-top:0;">Mobile Auto-Sync</h4>
-        <label style="display:flex; align-items:center; cursor:pointer; margin-bottom:10px;">
-            <input type="checkbox" id="autoSyncCheckbox" style="margin-right:8px; width:auto;" onchange="saveAutoSyncPreference()">
-            <strong>Auto-sync progressions</strong>
-        </label>
-        <p style="font-size:11px; color:#666; margin:0 0 15px 0;">Automatically update routine in local storage after a watch workout completes.</p>
-
-        <div id="syncContainer" style="display:none; background:#e8f4f8; padding:10px; border:1px solid #b8daff; border-radius:4px;">
-            <label style="font-size:12px; font-weight:bold; color:#004085;">📥 Watch Auto-Progression Sync (Manual):</label>
-            <div class="flex-row" style="margin-top:5px;">
-                <select id="syncSelect" style="margin:0;"></select>
-                <button type="button" class="small-btn" style="background:var(--blue); margin:0; white-space:nowrap;" onclick="loadSyncedRoutine()">Load</button>
-                <button type="button" class="small-btn delete-btn" style="margin:0; white-space:nowrap;" onclick="deleteSyncedRoutine()">Delete</button>
-            </div>
-        </div>
     </div>
 </div>
 
@@ -354,7 +338,6 @@ let batchRoutines    = [];
 let editingIndex     = -1;
 let draggedIndex     = null;
 let workoutHistory   = [];
-let syncedRoutinesDict = {};
 let shouldClearHistory = false;
 let shouldClearGoogle  = false;
 
@@ -409,14 +392,6 @@ function switchTab(evt, tabId) {
 // ============================================================
 function getSavedRoutines()  { return Storage.getJSON('savedRoutines', []); }
 function getLastRoutine()    { return Storage.get('lastRoutine', ''); }
-function getAutoSyncEnabled(){ return Storage.get('autoSyncEnabled', 'false') === 'true'; }
-
-function saveAutoSyncPreference() {
-    const enabled = document.getElementById('autoSyncCheckbox').checked;
-    Storage.set('autoSyncEnabled', enabled ? 'true' : 'false');
-    document.getElementById('syncContainer').style.display = enabled ? 'block' : 'none';
-}
-
 function saveRoutineToStorage(name, exercises, progressionMode, weightIncrement) {
     let routines = getSavedRoutines();
     const idx = routines.findIndex(r => r.name === name);
@@ -1039,52 +1014,6 @@ function flagClearGoogle() {
 }
 
 // ============================================================
-// TWO-WAY SYNC
-// ============================================================
-function loadSyncedRoutine() {
-    const name      = document.getElementById('syncSelect').value;
-    const syncStr   = syncedRoutinesDict[name];
-    if (!syncStr) return;
-
-    const parts = syncStr.split('|');
-    document.getElementById('routineName').value = parts[0];
-
-    let startIndex = 1;
-    if (PROGRESSION_TOKENS.has(parts[1])) {
-        document.getElementById('progressionMode').value = parts[1];
-        document.getElementById('weightIncrement').value = parts[2];
-        updateProgressionUI();
-        startIndex = 3;
-    }
-
-    myRoutine = [];
-    for (let i = startIndex; i < parts.length; i += 6) {
-        if (!parts[i] || i + 5 >= parts.length) break;
-        myRoutine.push([
-            parts[i],
-            parseInt(parts[i+1], 10),
-            parseInt(parts[i+2], 10),
-            parseInt(parts[i+3], 10),
-            parseInt(parts[i+4], 10),
-            parts[i+5] === '-' ? '' : parts[i+5]
-        ]);
-    }
-    renderRoutine();
-    document.querySelector('.tab-btn[onclick*="tab-builder"]').click();
-    alert('✅ Auto-progressed routine loaded from watch!');
-}
-
-function deleteSyncedRoutine() {
-    const dropdown = document.getElementById('syncSelect');
-    if (dropdown.options.length === 0) return;
-    const name = dropdown.value;
-    if (!confirm(`Remove '${name}' from your synced auto-progression list?`)) return;
-    delete syncedRoutinesDict[name];
-    dropdown.remove(dropdown.selectedIndex);
-    if (dropdown.options.length === 0) document.getElementById('syncContainer').style.display = 'none';
-}
-
-// ============================================================
 // INITIALISATION
 // ============================================================
 window.addEventListener('load', () => {
@@ -1108,22 +1037,42 @@ window.addEventListener('load', () => {
     catch { workoutHistory = []; }
     renderHistory();
 
-    // Synced routines from URL param
+    // Auto-load progressed routine from watch sync, if available
     try {
-        syncedRoutinesDict = JSON.parse(getQueryParam('sync', '{}'));
-        const keys = Object.keys(syncedRoutinesDict);
-        if (keys.length > 0) {
-            document.getElementById('syncContainer').style.display = 'block';
-            const dropdown = document.getElementById('syncSelect');
-            keys.forEach(k => dropdown.appendChild(new Option(k, k)));
+        const syncParam = getQueryParam('sync', '{}');
+        const syncedDict = JSON.parse(syncParam);
+        const activeName = document.getElementById('routineName').value;
+        const syncStr = syncedDict[activeName];
+        if (syncStr) {
+            const parts = syncStr.split('|');
+            let startIndex = 1;
+            if (PROGRESSION_TOKENS.has(parts[1])) {
+                document.getElementById('progressionMode').value = parts[1];
+                document.getElementById('weightIncrement').value = parts[2];
+                updateProgressionUI();
+                startIndex = 3;
+            }
+            myRoutine = [];
+            for (let i = startIndex; i < parts.length; i += 6) {
+                if (!parts[i] || i + 5 >= parts.length) break;
+                myRoutine.push([
+                    parts[i],
+                    parseInt(parts[i+1], 10),
+                    parseInt(parts[i+2], 10),
+                    parseInt(parts[i+3], 10),
+                    parseInt(parts[i+4], 10),
+                    parts[i+5] === '-' ? '' : parts[i+5]
+                ]);
+            }
+            renderRoutine();
+            saveRoutineToStorage(
+                activeName,
+                myRoutine,
+                document.getElementById('progressionMode').value,
+                document.getElementById('weightIncrement').value
+            );
         }
-    } catch { syncedRoutinesDict = {}; }
-
-    // Auto-sync checkbox state also controls sync container visibility
-    if (getAutoSyncEnabled()) {
-        document.getElementById('autoSyncCheckbox').checked = true;
-        document.getElementById('syncContainer').style.display = 'block';
-    }
+    } catch {}
 });
 </script>
 </body>

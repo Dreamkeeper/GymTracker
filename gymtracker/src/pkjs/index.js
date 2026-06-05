@@ -113,14 +113,14 @@ function parseRoutineString(syncString) {
   for (var i = startIndex; i < parts.length; i += 6) {
     // Guard against incomplete trailing fields
     if (!parts[i] || i + 5 >= parts.length) break;
-    exercises.push({
-      name:      parts[i],
-      sets:      parseInt(parts[i + 1], 10),
-                   reps:      parseInt(parts[i + 2], 10),
-                   weight:    parseInt(parts[i + 3], 10),
-                   modifier:  parseInt(parts[i + 4], 10),
-                   comment:   parts[i + 5] === '-' ? '' : parts[i + 5]
-    });
+    exercises.push([
+      parts[i],
+      parseInt(parts[i + 1], 10),
+      parseInt(parts[i + 2], 10),
+      parseInt(parts[i + 3], 10),
+      parseInt(parts[i + 4], 10),
+      parts[i + 5] === '-' ? '' : parts[i + 5]
+    ]);
   }
 
   return {
@@ -281,20 +281,16 @@ Pebble.addEventListener('appmessage', function(e) {
     var syncString  = payload.ROUTINE_DATA;
     var routineName = syncString.split('|')[0];
 
-    // Always persist the raw string for the manual sync box
+    // Always persist the raw string as a safety fallback
     var syncedRoutines = Storage.getJSON('synced_routines', {});
     syncedRoutines[routineName] = syncString;
     Storage.setJSON('synced_routines', syncedRoutines);
     console.log('Two-Way Sync saved for: ' + routineName);
 
-    // Background auto-sync if the user has enabled it
-    if (Storage.get('autoSyncEnabled') === 'true') {
-      var parsed = parseRoutineString(syncString);
-      if (parsed) {
-        autoSyncRoutine(syncString, routineName, parsed);
-      } else {
-        console.log('Auto-sync skipped: could not parse routine string.');
-      }
+    // Always apply progression updates to savedRoutines
+    var parsed = parseRoutineString(syncString);
+    if (parsed) {
+      autoSyncRoutine(syncString, routineName, parsed);
     }
   }
 
