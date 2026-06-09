@@ -37,7 +37,8 @@ function doPost(e) {
   var avgHr = parts[7];
   
   // Loop through the rest of the string to parse exercises and sets
-  // i was orignally set to 3, which lead to odd
+  // i was orignally set to 3, which messed up the first record of a session with 
+  // the extra values for sensation, accuracy, density, max hr, and avg hr 
   for (var i = 8; i < parts.length; i++) {
     // If the part is not a number, it is the exercise name
     if (isNaN(parts[i])) {
