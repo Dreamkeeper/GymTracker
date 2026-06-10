@@ -51,15 +51,19 @@ function doPost(e) {
       var currentRow = [date, routine, duration, currentExercise, setNum, reps, weight]
 
       // uncomment below to add sensation to output
-      currentRow = currentRow.concat([sensation]);
+      // currentRow = currentRow.concat([sensation]);
+      
       // uncomment below to add accuracy to output
-      currentRow = currentRow.concat([accuracy]);
+      // currentRow = currentRow.concat([accuracy]);
+      
       // uncomment below to add density to output
-      currentRow = currentRow.concat([density]);
+      // currentRow = currentRow.concat([density]);
+      
       // uncomment below to add maxHr to output
-      currentRow = currentRow.concat([maxHr]);
+      // currentRow = currentRow.concat([maxHr]);
+      
       // uncomment below to add avgHr to output
-      currentRow = currentRow.concat([avgHr]);
+      // currentRow = currentRow.concat([avgHr]);
       
       // Append the perfectly formatted row to the spreadsheet!
       sheet.appendRow(currentRow);

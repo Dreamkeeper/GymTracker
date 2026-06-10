@@ -77,14 +77,16 @@ For power users, you can bypass the manual CSV download and have the watch beam 
 1. Create a brand new [Google Sheet](https://sheets.google.com).
 2. Name it something like "Pebble Gym Logs".
 3. In the very first row of your sheet (Row 1), type out the following headers across the columns: **Date** | **Routine** | **Duration (s)** | **Exercise** | **Set #** | **Reps** | **Weight**.
-4. In the top menu, click **Extensions** > **Apps Script**.
+4. If you want to include any of the additional fields: Sensation, Accuracy, Density, Max HR, or Avg HR add them to Row 1 and uncomment the corresponding code (see step 5 below).
+5. In the top menu, click **Extensions** > **Apps Script**.
 
 ### Step 2: Add the Code
 1. Delete any code currently in the script editor.
 2. In this GitHub repository, open the file named [`google_sheets_script.gs`](https://github.com/oliverano95/GymTracker/blob/main/google_sheets_script.gs).
 3. Copy all the code from that file and paste it into your Google Apps Script editor.
-4. On line 8 of the code, change the `mySecretPassword` variable to a secure password of your choice.
-5. Click the **Save** icon (the floppy disk).
+4. On line 15 of the code, change the `mySecretPassword` variable to a secure password of your choice.
+5. If you want to include any of the additional fields on lines 53-66 of the code: Sensation, Accuracy, Density, Max HR, or Avg HR, uncomment them.
+6. Click the **Save** icon (the floppy disk).
 
 ### Step 3: Deploy as a Web App
 1. In the top right corner of the Apps Script editor, click the blue **Deploy** button > **New deployment**.
