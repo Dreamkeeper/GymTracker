@@ -1037,33 +1037,89 @@ window.addEventListener('load', () => {
     catch { workoutHistory = []; }
     renderHistory();
 
-    // Auto-load progressed routine from watch sync, if available
+    // Auto-load progressed routine from watch sync, if available.
+    // FIX: synced_routines may be stale (it is only updated when the watch
+    // sends a workout-complete appmessage, not when the user edits a routine
+    // and sends it back). Blindly overwriting the local copy on every page
+    // open caused the user's freshly-edited routine to be silently replaced
+    // by an older version from the watch. The local copy is now treated as
+    // authoritative; sync data is only allowed to fill in progressed
+    // target_weight values for exercises the user has not modified.
     try {
         const syncParam = getQueryParam('sync', '{}');
         const syncedDict = JSON.parse(syncParam);
         const activeName = document.getElementById('routineName').value;
         const syncStr = syncedDict[activeName];
-        if (syncStr) {
-            const parts = syncStr.split('|');
-            let startIndex = 1;
-            if (PROGRESSION_TOKENS.has(parts[1])) {
-                document.getElementById('progressionMode').value = parts[1];
-                document.getElementById('weightIncrement').value = parts[2];
+        if (!syncStr) return;
+
+        const parts = syncStr.split('|');
+        let startIndex = 1;
+        let syncProgressionMode = null;
+        let syncWeightIncrement = null;
+        if (PROGRESSION_TOKENS.has(parts[1])) {
+            syncProgressionMode = parts[1];
+            syncWeightIncrement = parts[2];
+            startIndex = 3;
+        }
+
+        const syncExercises = [];
+        for (let i = startIndex; i < parts.length; i += 6) {
+            if (!parts[i] || i + 5 >= parts.length) break;
+            syncExercises.push([
+                parts[i],
+                parseInt(parts[i+1], 10),
+                parseInt(parts[i+2], 10),
+                parseInt(parts[i+3], 10),
+                parseInt(parts[i+4], 10),
+                parts[i+5] === '-' ? '' : parts[i+5]
+            ]);
+        }
+
+        const localRoutine = getSavedRoutines().find(r => r.name === activeName);
+        if (!localRoutine) {
+            // First-time import: no local copy exists yet, use the sync
+            // string as-is (preserves the original import behaviour).
+            if (syncProgressionMode !== null) {
+                document.getElementById('progressionMode').value = syncProgressionMode;
+                document.getElementById('weightIncrement').value = syncWeightIncrement;
                 updateProgressionUI();
-                startIndex = 3;
             }
-            myRoutine = [];
-            for (let i = startIndex; i < parts.length; i += 6) {
-                if (!parts[i] || i + 5 >= parts.length) break;
-                myRoutine.push([
-                    parts[i],
-                    parseInt(parts[i+1], 10),
-                    parseInt(parts[i+2], 10),
-                    parseInt(parts[i+3], 10),
-                    parseInt(parts[i+4], 10),
-                    parts[i+5] === '-' ? '' : parts[i+5]
-                ]);
+            myRoutine = syncExercises;
+            renderRoutine();
+            saveRoutineToStorage(
+                activeName,
+                myRoutine,
+                document.getElementById('progressionMode').value,
+                document.getElementById('weightIncrement').value
+            );
+            return;
+        }
+
+        // Local copy exists: merge. For each sync exercise, only update
+        // target_weight on the matching local exercise when the local
+        // exercise's identifying fields (name, sets, reps, modifier,
+        // comment) are identical to the sync's. This preserves renames,
+        // reorderings, deletions, and comment edits made on the phone,
+        // while still picking up the watch's auto-progression weights.
+        let merged = false;
+        const mergedExercises = (localRoutine.exercises || []).map(migrateLegacyExercise);
+        for (let i = 0; i < syncExercises.length && i < mergedExercises.length; i++) {
+            const local = mergedExercises[i];
+            const syncEx = syncExercises[i];
+            const sameIdentity =
+                String(local[0]) === String(syncEx[0]) &&
+                Number(local[1]) === Number(syncEx[1]) &&
+                Number(local[2]) === Number(syncEx[2]) &&
+                Number(local[4]) === Number(syncEx[4]) &&
+                String(local[5] || '') === String(syncEx[5] || '');
+            if (sameIdentity && Number(local[3]) !== Number(syncEx[3])) {
+                local[3] = Number(syncEx[3]);
+                merged = true;
             }
+        }
+
+        if (merged) {
+            myRoutine = mergedExercises;
             renderRoutine();
             saveRoutineToStorage(
                 activeName,
