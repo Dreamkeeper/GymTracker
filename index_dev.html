@@ -434,8 +434,6 @@ function loadSavedRoutines() {
         routines.forEach(r => select.appendChild(new Option(`${r.name} (${r.exercises.length} exercises)`, r.name)));
     }
 
-    document.getElementById('autoSyncCheckbox').checked = getAutoSyncEnabled();
-
     const target = (lastRoutine && routines.some(r => r.name === lastRoutine))
         ? lastRoutine
         : (routines.length > 0 ? routines[0].name : '');
@@ -796,8 +794,7 @@ function buildConfigPayload(routineData) {
         googleUrl:       document.getElementById('googleUrlInput').value,
         googlePwd:       document.getElementById('googlePwdInput').value,
         clearHistory:    shouldClearHistory,
-        clearGoogle:     shouldClearGoogle,
-        updatedSync:     syncedRoutinesDict
+        clearGoogle:     shouldClearGoogle
     };
 }
 
