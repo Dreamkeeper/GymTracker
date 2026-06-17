@@ -265,9 +265,10 @@
             <p style="font-size:12px; text-align:center; color:gray;">Loading history...</p>
         </div>
         <div class="flex-row">
-            <button onclick="downloadCSV()">Download CSV</button>
+            <button onclick="shareHistory()" style="background: var(--blue);">📤 Share Data</button>
             <button class="delete-btn" onclick="clearHistory()">Clear History</button>
         </div>
+        <div id="share-fallback-container"></div>
     </div>
 
     <div class="card">
@@ -966,9 +967,10 @@ function clearHistory() {
     renderHistory();
 }
 
-function downloadCSV() {
-    if (workoutHistory.length === 0) { alert('No history to download!'); return; }
+function shareHistory() {
+    if (workoutHistory.length === 0) { alert('No history to share!'); return; }
 
+    // 1. Build the CSV string (Reusing your existing parsing logic)
     const rows = ['Date,Routine,Duration (s),Mood,Accuracy (%),Density,Peak HR,Avg HR,Exercise,Set,Reps,Weight'];
     workoutHistory.forEach(entry => {
         const parts    = entry.data.split('|');
@@ -995,10 +997,37 @@ function downloadCSV() {
         }
     });
 
-    const a = document.createElement('a');
-    a.href     = URL.createObjectURL(new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8;' }));
-    a.download = 'pebble_workouts.csv';
-    a.click();
+    const csvString = rows.join('\n');
+
+    // 2. TIER 1: Attempt the Native Web Share API
+    if (navigator.share) {
+        navigator.share({
+            title: 'GymTracker CSV Data',
+            text: csvString
+        }).catch(err => {
+            // If it fails (and the user didn't just hit "cancel"), trigger the fallbacks
+            if (err.name !== 'AbortError') fallbackShare(csvString);
+        });
+    } else {
+        // Share API not supported at all, go straight to fallbacks
+        fallbackShare(csvString);
+    }
+}
+
+function fallbackShare(csvString) {
+    // TIER 2: Trigger the phone's native Email app via mailto:
+    const subject = encodeURIComponent("GymTracker Workout History");
+    const body = encodeURIComponent("Here is your exported CSV data:\n\n" + csvString);
+    window.location.href = `mailto:?subject=${subject}&body=${body}`;
+
+    // TIER 3: Failsafe Text Box. Inject a textarea so the user can manually copy it if Mail gets blocked.
+    const container = document.getElementById('share-fallback-container');
+    container.innerHTML = `
+        <div style="background: #fff3cd; border: 1px solid #ffeeba; padding: 10px; margin-top: 10px; border-radius: 4px;">
+            <p style="font-size: 11px; color: #856404; margin-top: 0;"><strong>Native share blocked by Pebble App.</strong><br>An email has been drafted. If it didn't open, copy your CSV data below:</p>
+            <textarea rows="4" style="font-family: monospace; font-size: 10px; white-space: pre;" readonly>${csvString}</textarea>
+        </div>
+    `;
 }
 
 // ============================================================
