@@ -1012,19 +1012,32 @@ function shareHistory() {
 }
 
 function fallbackShare(csvString) {
-    // TIER 2: Trigger the phone's native Email app via mailto:
-    const subject = encodeURIComponent("GymTracker Workout History");
-    const body = encodeURIComponent("Here is your exported CSV data:\n\n" + csvString);
-    window.location.href = `mailto:?subject=${subject}&body=${body}`;
-
-    // TIER 3: Failsafe Text Box. Inject a textarea so the user can manually copy it if Mail gets blocked.
+    // TIER 3 (Now Tier 2): Failsafe Text Box. 
+    // We skip the mailto: protocol entirely to avoid the ERR_UNKNOWN_URL_SCHEME crash.
     const container = document.getElementById('share-fallback-container');
     container.innerHTML = `
         <div style="background: #fff3cd; border: 1px solid #ffeeba; padding: 10px; margin-top: 10px; border-radius: 4px;">
-            <p style="font-size: 11px; color: #856404; margin-top: 0;"><strong>Native share blocked by Pebble App.</strong><br>An email has been drafted. If it didn't open, copy your CSV data below:</p>
-            <textarea rows="4" style="font-family: monospace; font-size: 10px; white-space: pre;" readonly>${csvString}</textarea>
+            <p style="font-size: 11px; color: #856404; margin-top: 0; margin-bottom: 10px;">
+                <strong>Native sharing blocked.</strong><br>
+                Please copy your CSV data below and paste it into your notes, email, or Google Sheets:
+            </p>
+            <button onclick="copyCSVToClipboard()" style="background: var(--blue); margin-bottom: 10px; width: 100%;">📋 Copy CSV Data</button>
+            <textarea id="csv-export-textarea" rows="5" style="font-family: monospace; font-size: 10px; white-space: pre;" readonly>${csvString}</textarea>
         </div>
     `;
+}
+
+function copyCSVToClipboard() {
+    const ta = document.getElementById('csv-export-textarea');
+    ta.select(); 
+    ta.setSelectionRange(0, 99999); // For mobile devices
+    
+    try { 
+        document.execCommand('copy'); 
+        alert('✅ CSV copied to clipboard!'); 
+    } catch { 
+        alert('⚠️ Unable to auto-copy. Please manually highlight the text in the box.'); 
+    }
 }
 
 // ============================================================
