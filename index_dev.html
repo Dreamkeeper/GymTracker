@@ -1098,20 +1098,24 @@ function retroactiveGoogleSync() {
     let failCount = 0;
 
     selected.forEach(entry => {
-        const req = new XMLHttpRequest();
-        req.open('POST', scriptUrl, true);
-        req.setRequestHeader('Content-Type', 'application/json');
-
-        req.onload = function() {
+        // Use fetch with 'no-cors' and 'text/plain' to bypass strict browser security rules
+        fetch(scriptUrl, {
+            method: 'POST',
+            mode: 'no-cors', 
+            headers: {
+                'Content-Type': 'text/plain;charset=utf-8'
+            },
+            body: JSON.stringify({ token: scriptPwd, workoutData: entry.data })
+        })
+        .then(() => {
             successCount++;
             checkCompletion();
-        };
-        req.onerror = function() {
+        })
+        .catch((error) => {
+            console.error('Sync Error:', error);
             failCount++;
             checkCompletion();
-        };
-
-        req.send(JSON.stringify({ token: scriptPwd, workoutData: entry.data }));
+        });
     });
 
     function checkCompletion() {
