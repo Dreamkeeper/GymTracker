@@ -683,6 +683,8 @@ function renderRoutine() {
             linkedPosition = 2;  // next is giant 2/3
         } else if (isGiantSecondHalf) {
             linkedPosition = 3;  // next is giant 3/3
+        } else if (modifier === 2) {
+            linkedPosition = 1;  // next is superset 2/2
         } else {
             linkedPosition = 0;  // next is normal
         }
