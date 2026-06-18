@@ -769,6 +769,13 @@ function addExercise() {
     const routineForValidation = (editingIndex === -1)
         ? [...myRoutine, exercise]
         : myRoutine.map((e, idx) => idx === editingIndex ? exercise : e);
+    // On edit, propagate any target_sets change to the other members of
+    // the same linked set so the routine stays consistent. The cascade
+    // happens before the validator so the validator then passes, and
+    // any cascaded target_sets are written back to myRoutine below.
+    if (editingIndex >= 0) {
+        applyLinkedSetCascade(routineForValidation, editingIndex);
+    }
     if (!validateLinkedSetAtAdd(routineForValidation, document.getElementById('routineName').value || 'My Routine')) {
         return;
     }
@@ -776,7 +783,13 @@ function addExercise() {
     if (editingIndex === -1) {
         myRoutine.push(exercise);
     } else {
+        // Commit the edited exercise and any cascaded target_sets.
         myRoutine[editingIndex] = exercise;
+        for (let i = 0; i < routineForValidation.length; i++) {
+            if (myRoutine[i][1] !== routineForValidation[i][1]) {
+                myRoutine[i][1] = routineForValidation[i][1];
+            }
+        }
         editingIndex = -1;
         document.getElementById('formTitle').innerText    = 'Add Exercise';
         document.getElementById('addUpdateBtn').innerText = '+ Add to Routine';
@@ -896,6 +909,76 @@ function validateLinkedSetForSend(routine, name) {
         }
     }
     return true;
+}
+
+// ============================================================
+// LINKED-SET CASCADE (edit-time)
+//
+// When the user edits the target_sets of a single member of a linked
+// set, propagate the new value to the other members so the whole set
+// stays consistent. The validator then passes and the routine list
+// re-renders with the new matching values.
+//
+// linkedPosition is determined by walking the routine up to (but not
+// including) editIndex:
+//   0 = normal, 1 = superset 2/2, 2 = giant 2/3, 3 = giant 3/3
+// ============================================================
+function getLinkedPositionAt(routine, editIndex) {
+    let pos = 0;
+    for (let i = 0; i < editIndex; i++) {
+        const prev = routine[i];
+        const prevModifier = prev.length > 4 ? parseInt(prev[4], 10) : 0;
+        if (pos === 3) {
+            pos = 0;                  // past giant 3/3 -> next is normal
+        } else if (pos === 2) {
+            pos = 3;                  // prev was giant 2/3, current is giant 3/3
+        } else if (prevModifier === 7) {
+            pos = 2;                  // prev is giant anchor, current is giant 2/3
+        } else if (prevModifier === 2) {
+            pos = 1;                  // prev is superset anchor, current is superset 2/2
+        } else {
+            pos = 0;                  // normal
+        }
+    }
+    return pos;
+}
+
+function applyLinkedSetCascade(routine, editIndex) {
+    const ex = routine[editIndex];
+    if (!ex) return;
+    const modifier = ex.length > 4 ? parseInt(ex[4], 10) : 0;
+    const newTargetSets = parseInt(ex[1], 10);
+
+    if (modifier === 7) {
+        // Giant-set anchor: propagate forward to the next 2 members.
+        for (let i = 1; i <= 2; i++) {
+            const t = editIndex + i;
+            if (t < routine.length) routine[t][1] = newTargetSets;
+        }
+    } else if (modifier === 2) {
+        // Superset anchor: propagate forward to the next 1 member.
+        const t = editIndex + 1;
+        if (t < routine.length) routine[t][1] = newTargetSets;
+    } else {
+        // The edited exercise might be a 2nd/3rd member of an existing
+        // linked set. Determine its position by walking the previous
+        // exercises' modifiers.
+        const pos = getLinkedPositionAt(routine, editIndex);
+        if (pos === 1) {
+            // Superset 2/2: cascade backward to the anchor.
+            routine[editIndex - 1][1] = newTargetSets;
+        } else if (pos === 2) {
+            // Giant 2/3: cascade to the anchor and the 3/3.
+            routine[editIndex - 1][1] = newTargetSets;
+            const t = editIndex + 1;
+            if (t < routine.length) routine[t][1] = newTargetSets;
+        } else if (pos === 3) {
+            // Giant 3/3: cascade to the anchor and the 2/3.
+            routine[editIndex - 1][1] = newTargetSets;
+            routine[editIndex - 2][1] = newTargetSets;
+        }
+        // pos === 0: not part of any linked set; nothing to cascade.
+    }
 }
 
 // ============================================================
