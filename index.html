@@ -747,11 +747,14 @@ function addExercise() {
     ];
 
     // Validate linked-set constraints against the routine as it will look
-    // once this exercise is added (or after the edit is applied).
+    // once this exercise is added (or after the edit is applied). Use the
+    // permissive add-time validator so the user can still build a giant
+    // set one exercise at a time on a blank routine; structural completeness
+    // is enforced at send time.
     const routineForValidation = (editingIndex === -1)
         ? [...myRoutine, exercise]
         : myRoutine.map((e, idx) => idx === editingIndex ? exercise : e);
-    if (!validateLinkedSet(routineForValidation, document.getElementById('routineName').value || 'My Routine')) {
+    if (!validateLinkedSetAtAdd(routineForValidation, document.getElementById('routineName').value || 'My Routine')) {
         return;
     }
 
@@ -805,39 +808,74 @@ function editExercise(index) {
 
 // ============================================================
 // LINKED-SET VALIDATION
+//
 // A superset (modifier 2) requires a matching partner with the same
 // target_sets. A giant set (modifier 7) requires the next two exercises
 // to exist and all three to have the same target_sets.
+//
+// Two entry points so that building a routine in progress is not
+// rejected for being "structurally incomplete":
+//
+//   * validateLinkedSetAtAdd     — permissive. Only checks target_sets
+//                                 match against any partner that is
+//                                 already in the routine. Lets the user
+//                                 add a giant-set anchor first, then
+//                                 add the 2nd and 3rd members later.
+//   * validateLinkedSetForSend   — strict. Calls the add-time check
+//                                 and then enforces structural
+//                                 completeness (every superset / giant
+//                                 set anchor has the required number
+//                                 of partners below it).
 // ============================================================
-function validateLinkedSet(routine, name) {
+function validateLinkedSetAtAdd(routine, name) {
     for (let i = 0; i < routine.length; i++) {
         const ex = routine[i];
         const modifier = ex.length > 4 ? parseInt(ex[4], 10) : 0;
         const targetSets = parseInt(ex[1], 10);
 
         if (modifier === 2) {
-            if (i + 1 >= routine.length) {
-                alert(`'${ex[0]}' is a Superset with no partner below it.`);
-                return false;
+            // Superset: check the partner below if it exists.
+            if (i + 1 < routine.length) {
+                const next = routine[i + 1];
+                if (parseInt(next[1], 10) !== targetSets) {
+                    alert(`Superset mismatch: '${ex[0]}' has ${targetSets} target sets, but '${next[0]}' has ${parseInt(next[1], 10)}. All exercises in a superset must have the same target sets.`);
+                    return false;
+                }
             }
-            const next = routine[i + 1];
-            if (parseInt(next[1], 10) !== targetSets) {
-                alert(`Superset mismatch: '${ex[0]}' has ${targetSets} target sets, but '${next[0]}' has ${parseInt(next[1], 10)}. All exercises in a superset must have the same target sets.`);
+        } else if (modifier === 7) {
+            // Giant set: check the 2nd and 3rd members if they exist.
+            if (i + 1 < routine.length) {
+                const second = routine[i + 1];
+                if (parseInt(second[1], 10) !== targetSets) {
+                    alert(`Giant Set mismatch: '${ex[0]}' has ${targetSets} target sets, but '${second[0]}' (2nd of 3) has ${parseInt(second[1], 10)}. All exercises in a giant set must have the same target sets.`);
+                    return false;
+                }
+            }
+            if (i + 2 < routine.length) {
+                const third = routine[i + 2];
+                if (parseInt(third[1], 10) !== targetSets) {
+                    alert(`Giant Set mismatch: '${ex[0]}' has ${targetSets} target sets, but '${third[0]}' (3rd of 3) has ${parseInt(third[1], 10)}. All exercises in a giant set must have the same target sets.`);
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
+function validateLinkedSetForSend(routine, name) {
+    if (!validateLinkedSetAtAdd(routine, name)) return false;
+    for (let i = 0; i < routine.length; i++) {
+        const ex = routine[i];
+        const modifier = ex.length > 4 ? parseInt(ex[4], 10) : 0;
+        if (modifier === 2) {
+            if (i + 1 >= routine.length) {
+                alert(`Send failed: '${ex[0]}' is a Superset with no partner below it in '${name}'.`);
                 return false;
             }
         } else if (modifier === 7) {
             if (i + 2 >= routine.length) {
-                alert(`'${ex[0]}' is a Giant Set but needs two more exercises below it.`);
-                return false;
-            }
-            const second = routine[i + 1];
-            const third  = routine[i + 2];
-            if (parseInt(second[1], 10) !== targetSets) {
-                alert(`Giant Set mismatch: '${ex[0]}' has ${targetSets} target sets, but '${second[0]}' (2nd of 3) has ${parseInt(second[1], 10)}. All exercises in a giant set must have the same target sets.`);
-                return false;
-            }
-            if (parseInt(third[1], 10) !== targetSets) {
-                alert(`Giant Set mismatch: '${ex[0]}' has ${targetSets} target sets, but '${third[0]}' (3rd of 3) has ${parseInt(third[1], 10)}. All exercises in a giant set must have the same target sets.`);
+                alert(`Send failed: '${ex[0]}' is a Giant Set but needs two more exercises below it in '${name}'.`);
                 return false;
             }
         }
@@ -850,7 +888,7 @@ function validateLinkedSet(routine, name) {
 // ============================================================
 function validateRoutineForSend(name) {
     if (myRoutine.length === 0) return true; // allow sending settings-only
-    return validateLinkedSet(myRoutine, name);
+    return validateLinkedSetForSend(myRoutine, name);
 }
 
 function serialiseRoutine(name, exercises) {
