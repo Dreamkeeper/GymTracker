@@ -85,6 +85,9 @@
         .badge-drop       { background: #e83e8c; }
         .badge-super      { background: var(--blue); }
         .badge-super-2    { background: var(--teal); }
+        .badge-giant      { background: #6f42c1; }
+        .badge-giant-2    { background: #6f42c1; opacity: .8; }
+        .badge-giant-3    { background: #6f42c1; opacity: .6; }
         .badge-warmup     { background: #ffc107; color: #212529; }
         .badge-bodyweight { background: var(--green); }
         .badge-bw-drop    { background: #6f42c1; }
@@ -94,6 +97,12 @@
         .superset-link { border-left: 4px solid var(--blue); background: #f4f9ff; }
         .superset-link-top    { border-bottom: none; border-bottom-left-radius: 0; border-bottom-right-radius: 0; margin-bottom: 0; }
         .superset-link-bottom { border-top-left-radius: 0; border-top-right-radius: 0; border-top: 1px dashed #b8daff; }
+
+        /* ── Giant Set styling ── */
+        .giantset-link { border-left: 4px solid #6f42c1; background: #f6f2ff; }
+        .giantset-link-top    { border-bottom: none; border-bottom-left-radius: 0; border-bottom-right-radius: 0; margin-bottom: 0; }
+        .giantset-link-mid    { border-bottom: none; border-top-left-radius: 0; border-top-right-radius: 0; border-top: 1px dashed #d5c4f0; border-bottom: 1px dashed #d5c4f0; margin-bottom: 0; border-radius: 0; }
+        .giantset-link-bottom { border-top-left-radius: 0; border-top-right-radius: 0; border-top: 1px dashed #d5c4f0; }
 
         /* ── Descriptions ── */
         .modifier-desc {
@@ -170,6 +179,7 @@
             <option value="2">Superset</option>
             <option value="3">Warmup</option>
             <option value="6">Timed (Count up)</option>
+            <option value="7">Giant Set</option>
         </select>
         <div id="modifierDesc" class="modifier-desc">Standard exercise execution with regular rest periods.</div>
         <label style="font-size:14px; font-weight:bold; display:block;">
@@ -309,7 +319,8 @@ const MODIFIER_META = {
     1: { desc: '<strong>Drop Set:</strong> Doubles target sets. Normal targets on odd sets, dynamic reductions on even sets. <strong>(If weight is 0, drops reps instead)</strong>.', borderColor: '#e83e8c' },
     2: { desc: '<strong>Superset:</strong> Links this exercise with the <strong>NEXT</strong> exercise. The watch bounces between the two until all sets are done.', borderColor: '#007bff' },
     3: { desc: '<strong>Warmup:</strong> Executes normally but the watch cuts the rest timer in half between sets.', borderColor: '#ffc107' },
-    6: { desc: '<strong>Timed Exercise:</strong> "Target Reps" = Target Seconds. Press Select to start the timer. Target Weight is ignored.', borderColor: '#fd7e14' }
+    6: { desc: '<strong>Timed Exercise:</strong> "Target Reps" = Target Seconds. Press Select to start the timer. Target Weight is ignored.', borderColor: '#fd7e14' },
+    7: { desc: '<strong>Giant Set:</strong> Links this exercise with the <strong>NEXT TWO</strong> exercises. The watch bounces across all three until all sets are done. All three must have the same target sets.', borderColor: '#6f42c1' }
 };
 
 const PROGRESSION_META = {
@@ -595,21 +606,30 @@ function renderRoutine() {
 
     // Use a DocumentFragment to avoid repeated DOM reflows
     const fragment = document.createDocumentFragment();
-    let isSecondHalf = false;
+    // linkedPosition: 0 = none, 1 = superset 2/2, 2 = giant 2/3, 3 = giant 3/3.
+    // Determined by the previous exercise(s), not the current one.
+    let linkedPosition = 0;
 
     myRoutine.forEach((ex, i) => {
         const weight   = parseInt(ex[3], 10);
         let modifier   = ex.length > 4 ? parseInt(ex[4], 10) : 0;
 
-        // A second-half superset element cannot itself carry a modifier
-        if (isSecondHalf && modifier !== 0) { modifier = 0; ex[4] = 0; }
+        // A second-half (superset or giant set) element cannot itself carry a modifier
+        if (linkedPosition !== 0 && modifier !== 0) { modifier = 0; ex[4] = 0; }
+
+        const isSuperSecondHalf  = (linkedPosition === 1);
+        const isGiantSecondHalf  = (linkedPosition === 2);
+        const isGiantThirdHalf   = (linkedPosition === 3);
 
         // Build badge HTML
         let badges = '';
-        if (modifier === 2)   badges += '<span class="mod-badge badge-super">SUPER 1/2</span> ';
-        if (isSecondHalf)     badges += '<span class="mod-badge badge-super-2">SUPER 2/2</span> ';
-        if (modifier === 3)   badges += '<span class="mod-badge badge-warmup">WARMUP</span> ';
-        if (modifier === 6)   badges += '<span class="mod-badge badge-timed">TIMED</span> ';
+        if (modifier === 2)        badges += '<span class="mod-badge badge-super">SUPER 1/2</span> ';
+        if (isSuperSecondHalf)     badges += '<span class="mod-badge badge-super-2">SUPER 2/2</span> ';
+        if (modifier === 7)        badges += '<span class="mod-badge badge-giant">GIANT 1/3</span> ';
+        if (isGiantSecondHalf)     badges += '<span class="mod-badge badge-giant-2">GIANT 2/3</span> ';
+        if (isGiantThirdHalf)      badges += '<span class="mod-badge badge-giant-3">GIANT 3/3</span> ';
+        if (modifier === 3)        badges += '<span class="mod-badge badge-warmup">WARMUP</span> ';
+        if (modifier === 6)        badges += '<span class="mod-badge badge-timed">TIMED</span> ';
         if (modifier !== 6 && weight === 0) {
             badges += modifier === 1
                 ? '<span class="mod-badge badge-bw-drop">BW DROP</span> '
@@ -619,14 +639,20 @@ function renderRoutine() {
         }
 
         const comment     = (ex.length > 5 && ex[5] !== '') ? `<div style="font-size:11px;color:#888;margin-top:2px;">📝 ${ex[5]}</div>` : '';
-        const handle      = isSecondHalf ? '<div class="grab-handle" style="color:#007bff;margin-left:8px;">↳</div>' : '<div class="grab-handle">≡</div>';
+        const handleColor = isSuperSecondHalf ? '#007bff' : (isGiantSecondHalf || isGiantThirdHalf) ? '#6f42c1' : '';
+        const handleStyle = handleColor ? `color:${handleColor};margin-left:8px;` : '';
+        const handle      = handleColor ? `<div class="grab-handle" style="${handleStyle}">↳</div>` : '<div class="grab-handle">≡</div>';
         const upDisabled  = i === 0                    ? 'disabled style="opacity:.3;"' : '';
         const downDisabled= i === myRoutine.length - 1 ? 'disabled style="opacity:.3;"' : '';
 
         const div = document.createElement('div');
-        div.className = 'exercise-item'
-            + (modifier === 2   ? ' superset-link superset-link-top' : '')
-            + (isSecondHalf     ? ' superset-link superset-link-bottom' : '');
+        let className = 'exercise-item';
+        if (modifier === 2)        className += ' superset-link superset-link-top';
+        if (isSuperSecondHalf)     className += ' superset-link superset-link-bottom';
+        if (modifier === 7)        className += ' giantset-link giantset-link-top';
+        if (isGiantSecondHalf)     className += ' giantset-link giantset-link-mid';
+        if (isGiantThirdHalf)      className += ' giantset-link giantset-link-bottom';
+        div.className = className;
         div.draggable = true;
         div.addEventListener('dragstart', e => dragStart(e, i));
         div.addEventListener('dragover',  e => dragOver(e, div));
@@ -650,7 +676,16 @@ function renderRoutine() {
             </div>`;
 
         fragment.appendChild(div);
-        isSecondHalf = (modifier === 2);
+
+        // Compute the linkedPosition for the NEXT exercise based on this one's modifier
+        // (and whether the current one is itself a 2/3 giant member).
+        if (modifier === 7) {
+            linkedPosition = 2;  // next is giant 2/3
+        } else if (isGiantSecondHalf) {
+            linkedPosition = 3;  // next is giant 3/3
+        } else {
+            linkedPosition = 0;  // next is normal
+        }
     });
 
     listDiv.innerHTML = '';
@@ -709,6 +744,15 @@ function addExercise() {
         document.getElementById('exerciseComment').value.trim()
     ];
 
+    // Validate linked-set constraints against the routine as it will look
+    // once this exercise is added (or after the edit is applied).
+    const routineForValidation = (editingIndex === -1)
+        ? [...myRoutine, exercise]
+        : myRoutine.map((e, idx) => idx === editingIndex ? exercise : e);
+    if (!validateLinkedSet(routineForValidation, document.getElementById('routineName').value || 'My Routine')) {
+        return;
+    }
+
     if (editingIndex === -1) {
         myRoutine.push(exercise);
     } else {
@@ -758,18 +802,53 @@ function editExercise(index) {
 }
 
 // ============================================================
+// LINKED-SET VALIDATION
+// A superset (modifier 2) requires a matching partner with the same
+// target_sets. A giant set (modifier 7) requires the next two exercises
+// to exist and all three to have the same target_sets.
+// ============================================================
+function validateLinkedSet(routine, name) {
+    for (let i = 0; i < routine.length; i++) {
+        const ex = routine[i];
+        const modifier = ex.length > 4 ? parseInt(ex[4], 10) : 0;
+        const targetSets = parseInt(ex[1], 10);
+
+        if (modifier === 2) {
+            if (i + 1 >= routine.length) {
+                alert(`'${ex[0]}' is a Superset with no partner below it.`);
+                return false;
+            }
+            const next = routine[i + 1];
+            if (parseInt(next[1], 10) !== targetSets) {
+                alert(`Superset mismatch: '${ex[0]}' has ${targetSets} target sets, but '${next[0]}' has ${parseInt(next[1], 10)}. All exercises in a superset must have the same target sets.`);
+                return false;
+            }
+        } else if (modifier === 7) {
+            if (i + 2 >= routine.length) {
+                alert(`'${ex[0]}' is a Giant Set but needs two more exercises below it.`);
+                return false;
+            }
+            const second = routine[i + 1];
+            const third  = routine[i + 2];
+            if (parseInt(second[1], 10) !== targetSets) {
+                alert(`Giant Set mismatch: '${ex[0]}' has ${targetSets} target sets, but '${second[0]}' (2nd of 3) has ${parseInt(second[1], 10)}. All exercises in a giant set must have the same target sets.`);
+                return false;
+            }
+            if (parseInt(third[1], 10) !== targetSets) {
+                alert(`Giant Set mismatch: '${ex[0]}' has ${targetSets} target sets, but '${third[0]}' (3rd of 3) has ${parseInt(third[1], 10)}. All exercises in a giant set must have the same target sets.`);
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// ============================================================
 // ROUTINE SERIALISATION  (shared by single send and batch)
 // ============================================================
 function validateRoutineForSend(name) {
     if (myRoutine.length === 0) return true; // allow sending settings-only
-    const lastMod = myRoutine.length > 0
-        ? (myRoutine[myRoutine.length - 1].length > 4 ? parseInt(myRoutine[myRoutine.length - 1][4], 10) : 0)
-        : 0;
-    if (lastMod === 2) {
-        alert(`Send failed: The last exercise in '${name}' is a Superset with no partner below it.`);
-        return false;
-    }
-    return true;
+    return validateLinkedSet(myRoutine, name);
 }
 
 function serialiseRoutine(name, exercises) {
