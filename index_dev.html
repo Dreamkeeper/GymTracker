@@ -1076,8 +1076,16 @@ function retroactiveGoogleSync() {
         return;
     }
 
-    const scriptUrl = document.getElementById('googleUrlInput').value || Storage.get('googleUrl');
-    const scriptPwd = document.getElementById('googlePwdInput').value || Storage.get('googlePwd');
+    // 1. Check if the user just typed them into the input fields
+    // 2. Fallback to the URL parameters (which the Pebble app passes in if they are stored)
+    // 3. Fallback to localStorage as a final safety net
+    const scriptUrl = document.getElementById('googleUrlInput').value.trim() 
+                   || getQueryParam('googleUrl', '').trim() 
+                   || Storage.get('googleUrl', '');
+                   
+    const scriptPwd = document.getElementById('googlePwdInput').value.trim() 
+                   || getQueryParam('googlePwd', '').trim() 
+                   || Storage.get('googlePwd', '');
 
     if (!scriptUrl || !scriptPwd) {
         alert('⚠️ Please scroll down and configure your Google Script URL and Password first!');
