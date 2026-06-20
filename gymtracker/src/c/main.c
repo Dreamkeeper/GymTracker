@@ -539,18 +539,51 @@ static void save_routine_to_slot(int slot_idx) {
 // ========================================================================= //
 static int get_completed_sets(void) {
   int completed = 0;
+  // Determine whether the current exercise is part of a giant set (modifier 7)
+  // and, if so, the anchor index of that trio.
+  int giant_anchor = -1;
+  if (s_app.state.curr_ex_idx < s_app.state.total_exercises &&
+      s_app.state.exercises[s_app.state.curr_ex_idx].modifier == 7 &&
+      s_app.state.curr_ex_idx + 2 < s_app.state.total_exercises) {
+    giant_anchor = s_app.state.curr_ex_idx;
+  } else if (s_app.state.curr_ex_idx >= 1 &&
+             s_app.state.curr_ex_idx - 1 < s_app.state.total_exercises &&
+             s_app.state.exercises[s_app.state.curr_ex_idx - 1].modifier == 7 &&
+             s_app.state.curr_ex_idx + 1 < s_app.state.total_exercises) {
+    giant_anchor = s_app.state.curr_ex_idx - 1;
+  } else if (s_app.state.curr_ex_idx >= 2 &&
+             s_app.state.curr_ex_idx - 2 < s_app.state.total_exercises &&
+             s_app.state.exercises[s_app.state.curr_ex_idx - 2].modifier == 7) {
+    giant_anchor = s_app.state.curr_ex_idx - 2;
+  }
+
   for (int i = 0; i < s_app.state.total_exercises; i++) {
+    bool in_giant = (giant_anchor >= 0 && i >= giant_anchor && i < giant_anchor + 3);
     if (i < s_app.state.curr_ex_idx) {
-      if (s_app.state.exercises[i].modifier == 2 && i == s_app.state.curr_ex_idx - 1)
+      // Past exercise. For a superset's first half OR any past giant-set
+      // member, current_set holds the count of finished sets (because the
+      // increment happens at the lap end, when we move on to the next set
+      // on every member). Use it directly.
+      if (in_giant) {
         completed += s_app.state.exercises[i].current_set;
-      else
+      } else if (s_app.state.exercises[i].modifier == 2 && i == s_app.state.curr_ex_idx - 1) {
+        completed += s_app.state.exercises[i].current_set;
+      } else {
         completed += s_app.state.exercises[i].target_sets;
+      }
     } else if (i == s_app.state.curr_ex_idx) {
+      // Current exercise: user is on set current_set (0..N-1 already done).
       completed += (s_app.state.exercises[i].current_set - 1);
     } else {
-      if (i == s_app.state.curr_ex_idx + 1 &&
-          s_app.state.exercises[s_app.state.curr_ex_idx].modifier == 2)
+      // Future exercise. For giant-set members that are still in the same
+      // trio, or a superset's second half, current_set holds the same
+      // "set number we're on" — the user has done current_set - 1 of them.
+      if (in_giant) {
         completed += (s_app.state.exercises[i].current_set - 1);
+      } else if (i == s_app.state.curr_ex_idx + 1 &&
+                 s_app.state.exercises[s_app.state.curr_ex_idx].modifier == 2) {
+        completed += (s_app.state.exercises[i].current_set - 1);
+      }
     }
   }
   return completed;
@@ -586,9 +619,13 @@ static void swap_exercise(void) {
   if (s_app.state.is_resting) return;
   if (s_app.state.curr_ex_idx + 1 >= s_app.state.total_exercises) return;
 
+  // Disallow reordering inside a superset OR a giant set (any of the 3 members)
   if (s_app.state.exercises[s_app.state.curr_ex_idx].modifier == 2 ||
       (s_app.state.curr_ex_idx > 0 &&
-       s_app.state.exercises[s_app.state.curr_ex_idx - 1].modifier == 2)) {
+       s_app.state.exercises[s_app.state.curr_ex_idx - 1].modifier == 2) ||
+      s_app.state.exercises[s_app.state.curr_ex_idx].modifier == 7 ||
+      (s_app.state.curr_ex_idx > 0 &&
+       s_app.state.exercises[s_app.state.curr_ex_idx - 1].modifier == 7)) {
     vibes_double_pulse();
     return;
   }
@@ -609,6 +646,46 @@ static void perform_true_skip(void) {
   bool is_first_half  = (ex->modifier == 2 && s_app.state.curr_ex_idx + 1 < s_app.state.total_exercises);
   bool is_second_half = (s_app.state.curr_ex_idx > 0 &&
                          s_app.state.exercises[s_app.state.curr_ex_idx - 1].modifier == 2);
+
+  // Detect giant-set membership. If the current exercise is part of a
+  // giant-set trio, mark all 3 members as fully complete and skip past them.
+  int giant_anchor = -1;
+  if (ex->modifier == 7 && s_app.state.curr_ex_idx + 2 < s_app.state.total_exercises) {
+    giant_anchor = s_app.state.curr_ex_idx;
+  } else if (s_app.state.curr_ex_idx > 0 &&
+             s_app.state.exercises[s_app.state.curr_ex_idx - 1].modifier == 7 &&
+             s_app.state.curr_ex_idx + 1 < s_app.state.total_exercises) {
+    giant_anchor = s_app.state.curr_ex_idx - 1;
+  } else if (s_app.state.curr_ex_idx >= 2 &&
+             s_app.state.exercises[s_app.state.curr_ex_idx - 2].modifier == 7) {
+    giant_anchor = s_app.state.curr_ex_idx - 2;
+  }
+
+  if (giant_anchor >= 0) {
+    for (int i = giant_anchor; i < giant_anchor + 3; i++) {
+      Exercise *member = &s_app.state.exercises[i];
+      for (int j = member->current_set - 1; j < member->target_sets; j++) {
+        member->actual_reps[j] = 0; member->actual_weight[j] = 0;
+      }
+      member->current_set = member->target_sets;
+    }
+    s_app.state.curr_ex_idx = giant_anchor + 3;
+    if (s_app.state.curr_ex_idx < s_app.state.total_exercises) {
+      init_temp_values(&s_app.state.exercises[s_app.state.curr_ex_idx]);
+      s_app.state.cached_completed_sets = get_completed_sets();
+      s_app.state.is_resting = false;
+      layer_set_hidden(s_app.ui.rest_overlay_layer, true);
+      s_app.state.edit_mode = (s_app.state.exercises[s_app.state.curr_ex_idx].target_weight == 0) ? 0 : s_app.settings.swap_reps_weight;
+      layer_mark_dirty(s_app.ui.progress_layer);
+      update_workout_ui(true);
+    } else {
+      vibes_double_pulse();
+      if (s_app.settings.enable_sensation) push_sensation_window();
+      else push_summary_window();
+      window_stack_remove(s_app.ui.workout_window, false);
+    }
+    return;
+  }
 
   for (int i = ex->current_set - 1; i < ex->target_sets; i++) {
     ex->actual_reps[i] = 0; ex->actual_weight[i] = 0;
@@ -660,7 +737,64 @@ static void perform_finish_set(void) {
   bool is_second_half = (s_app.state.curr_ex_idx > 0 &&
                          s_app.state.exercises[s_app.state.curr_ex_idx - 1].modifier == 2);
 
-  if (is_first_half) {
+  // Giant-set detection: the current exercise is one of 3 linked exercises
+  // (modifier 7 on the anchor). Determine the anchor and the position-in-trio.
+  int giant_anchor = -1;
+  int giant_pos    = 0;
+  if (ex->modifier == 7 && s_app.state.curr_ex_idx + 2 < s_app.state.total_exercises) {
+    giant_anchor = s_app.state.curr_ex_idx;
+    giant_pos    = 0;
+  } else if (s_app.state.curr_ex_idx > 0 &&
+             s_app.state.exercises[s_app.state.curr_ex_idx - 1].modifier == 7 &&
+             s_app.state.curr_ex_idx + 1 < s_app.state.total_exercises) {
+    giant_anchor = s_app.state.curr_ex_idx - 1;
+    giant_pos    = 1;
+  } else if (s_app.state.curr_ex_idx >= 2 &&
+             s_app.state.exercises[s_app.state.curr_ex_idx - 2].modifier == 7) {
+    giant_anchor = s_app.state.curr_ex_idx - 2;
+    giant_pos    = 2;
+  }
+
+  if (giant_anchor >= 0) {
+    bool is_lap_end = (giant_pos == 2);
+
+    if (is_lap_end) {
+      // We just finished the 3rd member of a lap. Decide whether the lap
+      // was the final one (anchor's current_set has already reached target)
+      // or whether we should advance to the next lap.
+      int anchor_current = s_app.state.exercises[giant_anchor].current_set;
+      int anchor_target  = s_app.state.exercises[giant_anchor].target_sets;
+      if (anchor_current >= anchor_target) {
+        // Final lap complete: advance past the trio and use the inter-exercise rest vibe.
+        s_app.state.curr_ex_idx = giant_anchor + 3;
+        if (s_app.state.curr_ex_idx < s_app.state.total_exercises) {
+          s_app.state.exercises[s_app.state.curr_ex_idx].current_set = 1;
+          s_app.state.rest_seconds_remaining = s_app.settings.ex_rest_sec;
+          play_vibe(s_app.settings.ex_vibe);
+        } else {
+          vibes_double_pulse();
+          if (s_app.settings.enable_sensation) push_sensation_window();
+          else push_summary_window();
+          window_stack_remove(s_app.ui.workout_window, false);
+          return;
+        }
+      } else {
+        // More laps to go: bump current_set on every member and return to the anchor.
+        for (int i = giant_anchor; i < giant_anchor + 3; i++) {
+          s_app.state.exercises[i].current_set++;
+        }
+        s_app.state.curr_ex_idx = giant_anchor;
+        s_app.state.rest_seconds_remaining = s_app.settings.super_rest_sec;
+        play_vibe(s_app.settings.set_vibe);
+      }
+    } else {
+      // Middle of a lap: cycle to the next member of the trio.
+      int next_pos = (giant_pos + 1) % 3;
+      s_app.state.curr_ex_idx = giant_anchor + next_pos;
+      s_app.state.rest_seconds_remaining = s_app.settings.super_rest_sec;
+      play_vibe(s_app.settings.set_vibe);
+    }
+  } else if (is_first_half) {
     s_app.state.curr_ex_idx++;
     s_app.state.exercises[s_app.state.curr_ex_idx].current_set = ex->current_set;
     s_app.state.rest_seconds_remaining = s_app.settings.super_rest_sec;
@@ -1668,6 +1802,7 @@ static void summary_window_load(Window *window) {
     if      (s_app.state.exercises[i].modifier == 1) mod_label = " [DROP]";
     else if (s_app.state.exercises[i].modifier == 2) mod_label = " [SUPER]";
     else if (s_app.state.exercises[i].modifier == 6) mod_label = " [TIMED]";
+    else if (s_app.state.exercises[i].modifier == 7) mod_label = " [GIANT]";
     written = snprintf(export_buf + offset, limit - offset, "|%s%s",
                        s_app.state.exercises[i].name, mod_label);
     offset += (written > 0 && written < limit - offset) ? written : limit - offset - 1;
@@ -2341,12 +2476,51 @@ static void update_workout_ui(bool animate_box) {
   static char next_buf[64];
   bool is_second_half = (s_app.state.curr_ex_idx > 0 &&
                          s_app.state.exercises[s_app.state.curr_ex_idx - 1].modifier == 2);
-  if (is_second_half && ex->current_set < ex->target_sets)
+
+  // Giant-set detection: figure out the anchor and the position-in-trio so the
+  // NEXT: line can preview the right next exercise in the bouncing cycle.
+  int giant_anchor = -1;
+  int giant_pos    = 0;
+  if (ex->modifier == 7 && s_app.state.curr_ex_idx + 2 < s_app.state.total_exercises) {
+    giant_anchor = s_app.state.curr_ex_idx;
+    giant_pos    = 0;
+  } else if (s_app.state.curr_ex_idx > 0 &&
+             s_app.state.exercises[s_app.state.curr_ex_idx - 1].modifier == 7 &&
+             s_app.state.curr_ex_idx + 1 < s_app.state.total_exercises) {
+    giant_anchor = s_app.state.curr_ex_idx - 1;
+    giant_pos    = 1;
+  } else if (s_app.state.curr_ex_idx >= 2 &&
+             s_app.state.exercises[s_app.state.curr_ex_idx - 2].modifier == 7) {
+    giant_anchor = s_app.state.curr_ex_idx - 2;
+    giant_pos    = 2;
+  }
+
+  if (giant_anchor >= 0) {
+    // Within a giant set, NEXT is the next member of the trio, except when
+    // we are on the very last set of the very last member (the 3rd set of
+    // C, when C is the trio's last member and current_set has reached
+    // target). Only then do we jump past the trio to the next routine item.
+    int anchor_current = s_app.state.exercises[giant_anchor].current_set;
+    int anchor_target  = s_app.state.exercises[giant_anchor].target_sets;
+    bool is_last_set = (giant_pos == 2) && (anchor_current >= anchor_target);
+    int next_idx;
+    if (is_last_set) {
+      next_idx = giant_anchor + 3;
+    } else {
+      next_idx = giant_anchor + ((giant_pos + 1) % 3);
+    }
+    if (next_idx < s_app.state.total_exercises) {
+      snprintf(next_buf, sizeof(next_buf), "NEXT: %s", s_app.state.exercises[next_idx].name);
+    } else {
+      snprintf(next_buf, sizeof(next_buf), "NEXT: FINISH!");
+    }
+  } else if (is_second_half && ex->current_set < ex->target_sets) {
     snprintf(next_buf, sizeof(next_buf), "NEXT: %s", s_app.state.exercises[s_app.state.curr_ex_idx - 1].name);
-  else if (s_app.state.curr_ex_idx + 1 < s_app.state.total_exercises)
+  } else if (s_app.state.curr_ex_idx + 1 < s_app.state.total_exercises) {
     snprintf(next_buf, sizeof(next_buf), "NEXT: %s", s_app.state.exercises[s_app.state.curr_ex_idx + 1].name);
-  else
+  } else {
     snprintf(next_buf, sizeof(next_buf), "NEXT: FINISH!");
+  }
   text_layer_set_text(s_app.ui.next_exercise_layer, next_buf);
 
   int active_target_weight = ex->target_weight;
