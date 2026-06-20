@@ -126,8 +126,13 @@
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
         /* ── History ── */
-        .history-item { font-size: 12px; padding: 8px; border-bottom: 1px solid #eee; }
+        .history-item {
+            font-size: 12px; padding: 8px; border-bottom: 1px solid #eee;
+            display: flex; align-items: center; gap: 10px; cursor: pointer; transition: background .2s;
+        }
+        .history-item:hover { background: #e9ecef; }
         .history-item:last-child { border-bottom: none; }
+        .history-item input[type="checkbox"] { width: auto; margin: 0; pointer-events: none; }
 
         /* ── Search input highlight ── */
         #exerciseSearch { border: 2px solid var(--brand); background: #fffaf5; }
@@ -271,13 +276,23 @@
     <div class="card">
         <h3 style="margin-top:0;">Workout History</h3>
         <p style="font-size:12px; color:gray; margin-top:0;">Workouts are saved locally to your phone.</p>
+
+        <div style="margin-bottom: 8px;">
+            <button type="button" class="small-btn secondary-btn" onclick="toggleAllHistory()">☑ Toggle All</button>
+        </div>
+
         <div id="historyList" style="max-height:250px; overflow-y:auto; background:#fafafa; border:1px solid #ddd; border-radius:4px; margin-bottom:10px; padding:5px;">
             <p style="font-size:12px; text-align:center; color:gray;">Loading history...</p>
         </div>
-        <div class="flex-row">
-            <button onclick="downloadCSV()">Download CSV</button>
-            <button class="delete-btn" onclick="clearHistory()">Clear History</button>
+
+        <div class="flex-row" style="margin-bottom: 10px;">
+            <button onclick="generateCSVBox()" style="background: var(--blue);">📄 Copy Selected</button>
+            <button onclick="retroactiveGoogleSync()" style="background: var(--green);">☁️ Sync Selected</button>
         </div>
+
+        <button class="delete-btn" onclick="clearHistory()" style="width: 100%; padding: 12px;">🗑️ Delete All History</button>
+
+        <div id="csv-export-container"></div>
     </div>
 
     <div class="card">
@@ -1144,32 +1159,67 @@ function renderHistory() {
         return;
     }
     const fragment = document.createDocumentFragment();
-    [...workoutHistory].reverse().forEach(entry => {
+
+    // Reverse for display, but keep track of the original index for data retrieval
+    [...workoutHistory].reverse().forEach((entry, i) => {
+        const originalIndex = workoutHistory.length - 1 - i;
         const date  = new Date(entry.timestamp).toLocaleString();
         const parts = entry.data.split('|');
         const name  = parts[0] || 'Unknown Routine';
         const mins  = Math.floor(parseInt(parts[2] || 0, 10) / 60);
+
         const div   = document.createElement('div');
         div.className   = 'history-item';
-        div.innerHTML   = `<strong>${name}</strong><br><span style="color:gray">${date} • ${mins} mins</span>`;
+        // Clicking anywhere on the row toggles the checkbox
+        div.onclick = function() {
+            const cb = document.getElementById('hist-chk-' + originalIndex);
+            cb.checked = !cb.checked;
+        };
+
+        div.innerHTML   = `
+            <input type="checkbox" id="hist-chk-${originalIndex}" class="hist-checkbox" checked>
+            <div>
+                <strong>${name}</strong><br>
+                <span style="color:gray">${date} • ${mins} mins</span>
+            </div>`;
         fragment.appendChild(div);
     });
     list.innerHTML = '';
     list.appendChild(fragment);
 }
 
+function toggleAllHistory() {
+    const checkboxes = document.querySelectorAll('.hist-checkbox');
+    if (checkboxes.length === 0) return;
+    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+    checkboxes.forEach(cb => cb.checked = !allChecked);
+}
+
+function getSelectedHistory() {
+    const selected = [];
+    document.querySelectorAll('.hist-checkbox').forEach(cb => {
+        if (cb.checked) {
+            const originalIndex = parseInt(cb.id.replace('hist-chk-', ''), 10);
+            selected.push(workoutHistory[originalIndex]);
+        }
+    });
+    return selected;
+}
+
 function clearHistory() {
-    if (!confirm('Delete all saved workouts from your phone?')) return;
+    if (!confirm('Delete ALL saved workouts from your phone? This cannot be undone.')) return;
     workoutHistory     = [];
     shouldClearHistory = true;
+    document.getElementById('csv-export-container').innerHTML = '';
     renderHistory();
 }
 
-function downloadCSV() {
-    if (workoutHistory.length === 0) { alert('No history to download!'); return; }
+function generateCSVBox() {
+    const selected = getSelectedHistory();
+    if (selected.length === 0) { alert('Please select at least one workout to copy.'); return; }
 
     const rows = ['Date,Routine,Duration (s),Mood,Accuracy (%),Density,Peak HR,Avg HR,Exercise,Set,Reps,Weight'];
-    workoutHistory.forEach(entry => {
+    selected.forEach(entry => {
         const parts    = entry.data.split('|');
         const routine  = parts[0] || 'Unknown';
         const date     = parts[1] || '';
@@ -1194,10 +1244,91 @@ function downloadCSV() {
         }
     });
 
-    const a = document.createElement('a');
-    a.href     = URL.createObjectURL(new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8;' }));
-    a.download = 'pebble_workouts.csv';
-    a.click();
+    const csvString = rows.join('\n');
+    const container = document.getElementById('csv-export-container');
+    container.innerHTML = `
+        <div style="background: #e8f4f8; border: 1px solid #b8daff; padding: 10px; margin-top: 15px; border-radius: 4px; animation: fadeIn .3s;">
+            <p style="font-size: 12px; color: #004085; margin-top: 0; margin-bottom: 10px;">
+                <strong>✅ CSV Data Ready!</strong><br>
+                Generated for ${selected.length} workout(s). Click below to copy it to your clipboard.
+            </p>
+            <button onclick="copyCSVToClipboard()" style="background: var(--blue); margin-bottom: 10px; width: 100%;">📋 Copy CSV Data</button>
+            <textarea id="csv-export-textarea" rows="5" style="font-family: monospace; font-size: 10px; white-space: pre;" readonly>${csvString}</textarea>
+        </div>
+    `;
+}
+
+function copyCSVToClipboard() {
+    const ta = document.getElementById('csv-export-textarea');
+    ta.select();
+    ta.setSelectionRange(0, 99999);
+
+    try {
+        document.execCommand('copy');
+        alert('✅ CSV copied to clipboard!');
+    } catch {
+        alert('⚠️ Unable to auto-copy. Please manually highlight the text in the box.');
+    }
+}
+
+function retroactiveGoogleSync() {
+    const selected = getSelectedHistory();
+    if (selected.length === 0) {
+        alert('Please select at least one workout to upload!');
+        return;
+    }
+
+    // 1. Check if the user just typed them into the input fields
+    // 2. Fallback to the URL parameters (which the Pebble app passes in if they are stored)
+    // 3. Fallback to localStorage as a final safety net
+    const scriptUrl = document.getElementById('googleUrlInput').value.trim()
+                   || getQueryParam('googleUrl', '').trim()
+                   || Storage.get('googleUrl', '');
+
+    const scriptPwd = document.getElementById('googlePwdInput').value.trim()
+                   || getQueryParam('googlePwd', '').trim()
+                   || Storage.get('googlePwd', '');
+
+    if (!scriptUrl || !scriptPwd) {
+        alert('⚠️ Please scroll down and configure your Google Script URL and Password first!');
+        return;
+    }
+
+    if (!confirm(`Are you sure you want to push ${selected.length} selected workout(s) to Google Sheets?`)) return;
+
+    let successCount = 0;
+    let failCount = 0;
+
+    selected.forEach(entry => {
+        // Use fetch with 'no-cors' and 'text/plain' to bypass strict browser security rules
+        fetch(scriptUrl, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: {
+                'Content-Type': 'text/plain;charset=utf-8'
+            },
+            body: JSON.stringify({ token: scriptPwd, workoutData: entry.data })
+        })
+        .then(() => {
+            successCount++;
+            checkCompletion();
+        })
+        .catch((error) => {
+            console.error('Sync Error:', error);
+            failCount++;
+            checkCompletion();
+        });
+    });
+
+    function checkCompletion() {
+        if (successCount + failCount === selected.length) {
+            if (failCount === 0) {
+                alert(`✅ Successfully synced ${successCount} workout(s) to Google Sheets!`);
+            } else {
+                alert(`⚠️ Sync finished with errors.\nSuccess: ${successCount}\nFailed: ${failCount}`);
+            }
+        }
+    }
 }
 
 // ============================================================
