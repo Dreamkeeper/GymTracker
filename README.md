@@ -73,14 +73,58 @@ By default, every completed workout is saved to your phone's local storage.
 
 For power users, you can bypass the manual CSV download and have the watch beam your workouts directly to a private Google Sheet the moment you finish your last set.
 
-### Step 1: Prepare the Google Sheet
+We highly recommend using our official Dashboard Template, but a manual setup is also available if you prefer building your own spreadsheet from scratch.
+
+### Option 1: Official Dashboard Template (Recommended)
+
+We have built a fully automated Google Sheets Dashboard that calculates your Estimated 1RM, tracks your total volume, and visualizes your heart rate and consistency over time.
+
+**Step 1: Copy the Template**
+
+1. Click here to automatically generate a private copy of the template in your Google Drive: **[Make a copy of the GymTracker Dashboard](https://docs.google.com/spreadsheets/d/13x0sPwYGMAi21Bp_KPz4TX86V7he1Z9OsEx0OiHgj8k/copy)**
+
+**Step 2: Secure Your Script**
+
+1. In the top menu of your new Google Sheet, click **Extensions** > **Apps Script**.
+2. Locate the `var secretPassword = "CHANGE_THIS_TO_YOUR_PASSWORD";` variable near the top of the code.
+3. Change the text inside the quotes to a secure password of your choice.
+4. Click the **Save** icon (the floppy disk).
+
+**Step 3: Deploy as a Web App**
+
+1. In the top right corner of the Apps Script editor, click the blue **Deploy** button > **New deployment**.
+2. Click the gear icon ⚙️ next to "Select type" and choose **Web app**.
+3. Fill out the deployment settings exactly like this:
+* **Description:** GymTracker Sync
+* **Execute as:** Me (your email)
+* **Who has access:** Anyone *(This is required for the watch to reach it!)*
+
+
+4. Click **Deploy**. *(Google will ask you to authorize access. Click "Review permissions", select your account, click "Advanced", and click "Go to project" to allow it).*
+5. Under "Web app", copy the **Web App URL** (It should end in `/exec`).
+
+**Step 4: Connect to the Pebble App**
+
+1. Open the app's **Settings** configuration page on your phone.
+2. Scroll down to **Google Sheets Auto-Export**.
+3. Paste your **Web App URL** into the first box.
+4. Type your **Secret Password** (the one you set in Step 2) into the second box.
+5. Click **Save & Send to Pebble**.
+
+---
+
+### Option 2: Manual Setup (Fallback)
+
+If you prefer to start with a blank canvas and build your own data processing logic, follow these steps.
+
+**Step 1: Prepare the Google Sheet**
 1. Create a brand new [Google Sheet](https://sheets.google.com).
 2. Name it something like "Pebble Gym Logs".
 3. In the very first row of your sheet (Row 1), type out the following headers across the columns: **Date** | **Routine** | **Duration (s)** | **Exercise** | **Set #** | **Reps** | **Weight**.
 4. If you want to include any of the additional fields: Sensation, Accuracy, Density, Max HR, or Avg HR add them to Row 1 and uncomment the corresponding code (see step 5 below).
 5. In the top menu, click **Extensions** > **Apps Script**.
 
-### Step 2: Add the Code
+**Step 2: Add the Code**
 1. Delete any code currently in the script editor.
 2. In this GitHub repository, open the file named [`google_sheets_script.gs`](https://github.com/oliverano95/GymTracker/blob/main/google_sheets_script.gs).
 3. Copy all the code from that file and paste it into your Google Apps Script editor.
@@ -88,7 +132,7 @@ For power users, you can bypass the manual CSV download and have the watch beam 
 5. If you want to include any of the additional fields on lines 53-66 of the code: Sensation, Accuracy, Density, Max HR, or Avg HR, uncomment them.
 6. Click the **Save** icon (the floppy disk).
 
-### Step 3: Deploy as a Web App
+**Step 3: Deploy as a Web App**
 1. In the top right corner of the Apps Script editor, click the blue **Deploy** button > **New deployment**.
 2. Click the gear icon ⚙️ next to "Select type" and choose **Web app**.
 3. Fill out the deployment settings exactly like this:
@@ -98,7 +142,7 @@ For power users, you can bypass the manual CSV download and have the watch beam 
 4. Click **Deploy**. *(Google will ask you to authorize access. Click "Review permissions", select your account, click "Advanced", and click "Go to project" to allow it).*
 5. Under "Web app", copy the **Web App URL** (It should end in `/exec`).
 
-### Step 4: Connect to the Pebble App
+**Step 4: Connect to the Pebble App**
 1. Open the app's **Settings** configuration page on your phone.
 2. Scroll down to **Optional: Google Sheets Auto-Export**.
 3. Paste your **Web App URL** into the first box.
