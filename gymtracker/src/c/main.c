@@ -134,6 +134,7 @@ typedef struct {
   DictationSession *dictation_session;
   DictationSession *new_ex_dictation_session;
   Exercise pending_exercise;
+  int note_toast_prev_ex_idx;
 } WorkoutState;
 
 typedef struct {
@@ -167,9 +168,19 @@ typedef struct {
 
   Layer *main_header_bg, *settings_header_bg, *progress_layer, *workout_bg_layer;
   Layer *summary_bg_layer, *rest_overlay_layer, *highlight_layer;
+  Layer *note_toast_layer, *note_toast_text_layer, *note_toast_acc_layer;
 
   Animation *box_anim;
   Animation *rest_anim;
+  Animation *note_toast_anim;
+
+  AppTimer *note_toast_dismiss_timer;
+  AppTimer *note_toast_scroll_timer;
+  char note_toast_text[32];
+  int16_t note_toast_text_width;
+  int16_t note_toast_scroll_offset;
+  int16_t note_toast_scroll_pause_until;
+  bool note_toast_visible;
 
   TextLayer *main_header_text, *settings_header_text, *timer_layer, *clock_layer;
   TextLayer *exercise_layer, *next_exercise_layer, *set_layer, *label_reps_layer;
@@ -265,6 +276,15 @@ static void perform_voice_note(void);
 static void execute_shortcut(int action_idx);
 static void start_workout_from_slot(int slot_idx);
 static void init_temp_values(Exercise *ex);
+
+static void show_note_toast(void);
+static void hide_note_toast(bool animated);
+static void note_toast_dismiss_cb(void *ctx);
+static void note_toast_scroll_cb(void *ctx);
+static void note_toast_text_update_proc(Layer *layer, GContext *ctx);
+static void note_toast_bg_update_proc(Layer *layer, GContext *ctx);
+static void note_toast_acc_update_proc(Layer *layer, GContext *ctx);
+static void note_toast_anim_stopped_handler(Animation *animation, bool finished, void *ctx);
 
 static void settings_window_load(Window *window);
 static void settings_window_unload(Window *window);
@@ -870,6 +890,8 @@ static void dictation_session_callback(DictationSession *session, DictationSessi
     snprintf(s_app.state.exercises[s_app.state.curr_ex_idx].comment,
              sizeof(s_app.state.exercises[0].comment), "%s", transcription);
     vibes_short_pulse();
+    // Reflect the newly dictated note immediately on the toast.
+    show_note_toast();
   }
 }
 
@@ -2356,6 +2378,225 @@ static void rest_anim_stopped_handler(Animation *animation, bool finished, void 
   s_app.ui.rest_anim = NULL;
 }
 
+// ----------- Note Toast Overlay -----------
+#define NOTE_TOAST_TEXT_PADDING 0
+#define NOTE_TOAST_ACCENT_H     4
+#define NOTE_TOAST_H_TALL       32
+#define NOTE_TOAST_H_SHORT      24
+#define NOTE_TOAST_H_TALL_RND   36
+#define NOTE_TOAST_H_SHORT_RND  28
+#define NOTE_TOAST_ANIM_MS      200
+#define NOTE_TOAST_DISMISS_MS   8000
+#define NOTE_TOAST_SCROLL_MS    50
+#define NOTE_TOAST_SCROLL_PAUSE 30  // ticks (~1.5s at 50ms)
+
+static int note_toast_height(GRect bounds) {
+#if defined(PBL_ROUND)
+  return (bounds.size.h > 180) ? NOTE_TOAST_H_TALL_RND : NOTE_TOAST_H_SHORT_RND;
+#else
+  return (bounds.size.h > 180) ? NOTE_TOAST_H_TALL : NOTE_TOAST_H_SHORT;
+#endif
+}
+
+static void note_toast_bg_update_proc(Layer *layer, GContext *ctx) {
+  GRect bounds = layer_get_bounds(layer);
+  graphics_context_set_fill_color(ctx, GColorBlack);
+  graphics_fill_rect(ctx, bounds, 0, GCornerNone);
+}
+
+static void note_toast_acc_update_proc(Layer *layer, GContext *ctx) {
+  GRect bounds = layer_get_bounds(layer);
+  graphics_context_set_fill_color(ctx, get_theme_color());
+  graphics_fill_rect(ctx, bounds, 0, GCornerNone);
+}
+
+static void note_toast_text_update_proc(Layer *layer, GContext *ctx) {
+  GRect bounds = layer_get_bounds(layer);
+  GFont font = fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD);
+
+  graphics_context_set_text_color(ctx, GColorWhite);
+  graphics_context_set_fill_color(ctx, GColorBlack);
+
+  bool is_scrolling = (s_app.ui.note_toast_text_width > bounds.size.w);
+  GTextAlignment align = is_scrolling ? GTextAlignmentLeft : GTextAlignmentCenter;
+
+  // Use a fixed line-height estimate for 14pt BOLD (~17px) and center it,
+  // biased 1px toward the top so the visible glyphs sit just above the geometric
+  // center of the toast strip.
+  int16_t line_h = 17;
+  int16_t y_off = (bounds.size.h - line_h) / 2 - 1;
+  if (y_off < 0) y_off = 0;
+  if (y_off + line_h > bounds.size.h) y_off = bounds.size.h - line_h;
+
+  GRect text_rect;
+  if (is_scrolling) {
+    // Scrolling: left-aligned in an extended rect so text can slide leftward
+    text_rect = GRect(s_app.ui.note_toast_scroll_offset, y_off,
+                      bounds.size.w + 200, bounds.size.h);
+  } else {
+    // Static: center-aligned within the text layer (which spans the full toast)
+    text_rect = GRect(0, y_off, bounds.size.w, bounds.size.h);
+  }
+
+  graphics_draw_text(ctx, s_app.ui.note_toast_text, font, text_rect,
+    GTextOverflowModeFill, align, NULL);
+}
+
+static void note_toast_anim_stopped_handler(Animation *animation, bool finished, void *context) {
+  s_app.ui.note_toast_anim = NULL;
+  if (!finished) return;
+  // After slide-out completes, hide and mark not visible.
+  if (!s_app.ui.note_toast_visible) {
+    layer_set_hidden(s_app.ui.note_toast_layer, true);
+  }
+}
+
+static void note_toast_scroll_cb(void *ctx) {
+  s_app.ui.note_toast_scroll_timer = NULL;
+  if (!s_app.ui.note_toast_visible) return;
+
+  if (s_app.ui.note_toast_scroll_pause_until > 0) {
+    s_app.ui.note_toast_scroll_pause_until--;
+    s_app.ui.note_toast_scroll_timer = app_timer_register(NOTE_TOAST_SCROLL_MS, note_toast_scroll_cb, NULL);
+    return;
+  }
+
+  // We scroll the text leftward: x_offset becomes more negative each tick.
+  // End condition: the right edge of the text has passed the left edge of the visible area.
+  if (-s_app.ui.note_toast_scroll_offset >= s_app.ui.note_toast_text_width + NOTE_TOAST_TEXT_PADDING) {
+    s_app.ui.note_toast_scroll_offset = NOTE_TOAST_TEXT_PADDING;
+    s_app.ui.note_toast_scroll_pause_until = NOTE_TOAST_SCROLL_PAUSE;
+  } else {
+    s_app.ui.note_toast_scroll_offset -= 1;
+  }
+
+  layer_mark_dirty(s_app.ui.note_toast_text_layer);
+  s_app.ui.note_toast_scroll_timer = app_timer_register(NOTE_TOAST_SCROLL_MS, note_toast_scroll_cb, NULL);
+}
+
+static void note_toast_dismiss_cb(void *ctx) {
+  s_app.ui.note_toast_dismiss_timer = NULL;
+  hide_note_toast(true);
+}
+
+static void show_note_toast(void) {
+  if (!s_app.ui.workout_window) return;
+  if (!s_app.ui.note_toast_layer) return;  // created in workout_window_load
+  if (s_app.state.curr_ex_idx >= s_app.state.total_exercises) return;
+  if (s_app.state.is_resting) return;
+
+  Exercise *ex = &s_app.state.exercises[s_app.state.curr_ex_idx];
+  if (ex->comment[0] == '\0') {
+    hide_note_toast(false);
+    return;
+  }
+
+  Layer *w_layer = window_get_root_layer(s_app.ui.workout_window);
+  GRect bounds   = layer_get_bounds(w_layer);
+  int toast_h   = note_toast_height(bounds);
+
+  // Copy text + measure
+  snprintf(s_app.ui.note_toast_text, sizeof(s_app.ui.note_toast_text), "%s", ex->comment);
+  GFont font = fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD);
+  GSize text_size = graphics_text_layout_get_content_size(
+    s_app.ui.note_toast_text, font, GRect(0, 0, 200, 40),
+    GTextOverflowModeFill, GTextAlignmentLeft);
+  s_app.ui.note_toast_text_width = text_size.w;
+
+  // Animate the container from off-screen to on-screen.
+  if (s_app.ui.note_toast_anim) {
+    animation_unschedule(s_app.ui.note_toast_anim);
+    s_app.ui.note_toast_anim = NULL;
+  }
+  // Cancel timers from any prior toast
+  if (s_app.ui.note_toast_dismiss_timer) {
+    app_timer_cancel(s_app.ui.note_toast_dismiss_timer);
+    s_app.ui.note_toast_dismiss_timer = NULL;
+  }
+  if (s_app.ui.note_toast_scroll_timer) {
+    app_timer_cancel(s_app.ui.note_toast_scroll_timer);
+    s_app.ui.note_toast_scroll_timer = NULL;
+  }
+
+  s_app.ui.note_toast_scroll_offset = NOTE_TOAST_TEXT_PADDING;
+  s_app.ui.note_toast_scroll_pause_until = 0;
+  s_app.ui.note_toast_visible = true;
+  layer_set_hidden(s_app.ui.note_toast_layer, false);
+  layer_mark_dirty(s_app.ui.note_toast_text_layer);
+
+  GRect on_screen  = GRect(0, bounds.size.h - toast_h, bounds.size.w, toast_h);
+  GRect from_rect  = layer_get_frame(s_app.ui.note_toast_layer);
+  layer_set_frame(s_app.ui.note_toast_layer, on_screen);
+
+  PropertyAnimation *anim = property_animation_create_layer_frame(
+    s_app.ui.note_toast_layer, &from_rect, &on_screen);
+  s_app.ui.note_toast_anim = property_animation_get_animation(anim);
+  animation_set_duration(s_app.ui.note_toast_anim, NOTE_TOAST_ANIM_MS);
+  animation_set_curve(s_app.ui.note_toast_anim, AnimationCurveEaseInOut);
+  animation_set_handlers(s_app.ui.note_toast_anim,
+    (AnimationHandlers){ .stopped = note_toast_anim_stopped_handler }, NULL);
+  animation_schedule(s_app.ui.note_toast_anim);
+
+  // Schedule auto-dismiss
+  s_app.ui.note_toast_dismiss_timer =
+    app_timer_register(NOTE_TOAST_DISMISS_MS, note_toast_dismiss_cb, NULL);
+
+  // Schedule scroll if text is wider than visible area
+  int16_t visible_w = layer_get_bounds(s_app.ui.note_toast_text_layer).size.w;
+  if (s_app.ui.note_toast_text_width > visible_w) {
+    s_app.ui.note_toast_scroll_pause_until = NOTE_TOAST_SCROLL_PAUSE;
+    s_app.ui.note_toast_scroll_timer =
+      app_timer_register(NOTE_TOAST_SCROLL_MS, note_toast_scroll_cb, NULL);
+  }
+}
+
+static void hide_note_toast(bool animated) {
+  if (!s_app.ui.note_toast_layer) return;
+  if (!s_app.ui.note_toast_visible && !animated) return;
+  if (!s_app.ui.note_toast_visible) {
+    layer_set_hidden(s_app.ui.note_toast_layer, true);
+    return;
+  }
+
+  if (s_app.ui.note_toast_dismiss_timer) {
+    app_timer_cancel(s_app.ui.note_toast_dismiss_timer);
+    s_app.ui.note_toast_dismiss_timer = NULL;
+  }
+  if (s_app.ui.note_toast_scroll_timer) {
+    app_timer_cancel(s_app.ui.note_toast_scroll_timer);
+    s_app.ui.note_toast_scroll_timer = NULL;
+  }
+
+  s_app.ui.note_toast_visible = false;
+  s_app.ui.note_toast_text[0] = '\0';
+
+  Layer *w_layer = window_get_root_layer(s_app.ui.workout_window);
+  GRect bounds   = layer_get_bounds(w_layer);
+  int toast_h   = note_toast_height(bounds);
+
+  GRect off_screen = GRect(0, bounds.size.h, bounds.size.w, toast_h);
+  GRect from_rect  = layer_get_frame(s_app.ui.note_toast_layer);
+
+  if (!animated) {
+    layer_set_frame(s_app.ui.note_toast_layer, off_screen);
+    layer_set_hidden(s_app.ui.note_toast_layer, true);
+    return;
+  }
+
+  if (s_app.ui.note_toast_anim) {
+    animation_unschedule(s_app.ui.note_toast_anim);
+    s_app.ui.note_toast_anim = NULL;
+  }
+  PropertyAnimation *anim = property_animation_create_layer_frame(
+    s_app.ui.note_toast_layer, &from_rect, &off_screen);
+  s_app.ui.note_toast_anim = property_animation_get_animation(anim);
+  animation_set_duration(s_app.ui.note_toast_anim, NOTE_TOAST_ANIM_MS);
+  animation_set_curve(s_app.ui.note_toast_anim, AnimationCurveEaseInOut);
+  animation_set_handlers(s_app.ui.note_toast_anim,
+    (AnimationHandlers){ .stopped = note_toast_anim_stopped_handler }, NULL);
+  animation_schedule(s_app.ui.note_toast_anim);
+}
+
 static void animate_highlight_box(bool animated) {
   Layer *w_layer = window_get_root_layer(s_app.ui.workout_window);
   GRect bounds   = layer_get_bounds(w_layer);
@@ -2433,6 +2674,8 @@ static void set_rest_overlay_state(bool is_resting, bool animated) {
   Layer *w_layer = window_get_root_layer(s_app.ui.workout_window);
   GRect bounds   = layer_get_bounds(w_layer);
   int rest_box_height = s_app.geom.line2_y - s_app.geom.line1_y;
+
+  if (is_resting) hide_note_toast(false);  // mutual exclusion with note toast
 
   GRect on_screen  = GRect(0, s_app.geom.line1_y, bounds.size.w, rest_box_height);
   GRect off_screen = GRect(0, bounds.size.h,       bounds.size.w, rest_box_height);
@@ -2614,6 +2857,13 @@ static void update_workout_ui(bool animate_box) {
 
   text_layer_set_text_color(s_app.ui.rest_time_layer, active_color);
   animate_highlight_box(animate_box);
+
+  // Show note toast on exercise change (suppressed while resting so the toast
+  // waits until the rest ends - the next update_workout_ui will pick it up)
+  if (!s_app.state.is_resting && s_app.state.curr_ex_idx != s_app.state.note_toast_prev_ex_idx) {
+    s_app.state.note_toast_prev_ex_idx = s_app.state.curr_ex_idx;
+    show_note_toast();
+  }
 }
 
 static void wo_up_click(ClickRecognizerRef r, void *ctx) {
@@ -2773,6 +3023,39 @@ static void workout_window_load(Window *window) {
 
   layer_add_child(w_layer, s_app.ui.rest_overlay_layer);
 
+  // ----------- Note Toast (bottom-anchored) -----------
+  int toast_h = note_toast_height(bounds);
+  int toast_w = bounds.size.w;
+  int text_y  = NOTE_TOAST_ACCENT_H;
+  int text_h  = toast_h - NOTE_TOAST_ACCENT_H;
+
+  GRect toast_frame = GRect(0, bounds.size.h, toast_w, toast_h);  // start off-screen
+  s_app.ui.note_toast_layer = layer_create(toast_frame);
+  layer_set_clips(s_app.ui.note_toast_layer, true);
+  layer_set_update_proc(s_app.ui.note_toast_layer, note_toast_bg_update_proc);
+  layer_add_child(w_layer, s_app.ui.note_toast_layer);
+
+  s_app.ui.note_toast_acc_layer = layer_create(
+    GRect(0, 0, toast_w, NOTE_TOAST_ACCENT_H));
+  layer_set_update_proc(s_app.ui.note_toast_acc_layer, note_toast_acc_update_proc);
+  layer_add_child(s_app.ui.note_toast_layer, s_app.ui.note_toast_acc_layer);
+
+  // Scrolling text container spans the full toast width
+  s_app.ui.note_toast_text_layer = layer_create(GRect(0, text_y, toast_w, text_h));
+  layer_set_clips(s_app.ui.note_toast_text_layer, true);
+  layer_set_update_proc(s_app.ui.note_toast_text_layer, note_toast_text_update_proc);
+  layer_add_child(s_app.ui.note_toast_layer, s_app.ui.note_toast_text_layer);
+
+  s_app.ui.note_toast_text[0] = '\0';
+  s_app.ui.note_toast_text_width = 0;
+  s_app.ui.note_toast_scroll_offset = NOTE_TOAST_TEXT_PADDING;
+  s_app.ui.note_toast_scroll_pause_until = 0;
+  s_app.ui.note_toast_dismiss_timer = NULL;
+  s_app.ui.note_toast_scroll_timer = NULL;
+  s_app.ui.note_toast_anim = NULL;
+  s_app.ui.note_toast_visible = false;
+  s_app.state.note_toast_prev_ex_idx = -1;  // ensure first update_workout_ui shows toast if applicable
+
 #if defined(PBL_ROUND)
   s_app.ui.progress_layer = layer_create(bounds);
 #else
@@ -2815,6 +3098,9 @@ static void workout_window_unload(Window *window) {
 
   if (s_app.ui.box_anim)  { animation_unschedule(s_app.ui.box_anim);  s_app.ui.box_anim  = NULL; }
   if (s_app.ui.rest_anim) { animation_unschedule(s_app.ui.rest_anim); s_app.ui.rest_anim = NULL; }
+  if (s_app.ui.note_toast_anim) { animation_unschedule(s_app.ui.note_toast_anim); s_app.ui.note_toast_anim = NULL; }
+  if (s_app.ui.note_toast_dismiss_timer) { app_timer_cancel(s_app.ui.note_toast_dismiss_timer); s_app.ui.note_toast_dismiss_timer = NULL; }
+  if (s_app.ui.note_toast_scroll_timer)   { app_timer_cancel(s_app.ui.note_toast_scroll_timer);   s_app.ui.note_toast_scroll_timer   = NULL; }
 
   layer_destroy(s_app.ui.progress_layer);
   layer_destroy(s_app.ui.workout_bg_layer);
@@ -2837,6 +3123,9 @@ static void workout_window_unload(Window *window) {
   text_layer_destroy(s_app.ui.rest_time_layer);
   text_layer_destroy(s_app.ui.rest_skip_layer);
   layer_destroy(s_app.ui.highlight_layer);
+  layer_destroy(s_app.ui.note_toast_text_layer);
+  layer_destroy(s_app.ui.note_toast_acc_layer);
+  layer_destroy(s_app.ui.note_toast_layer);
 }
 
 static void push_workout_window(void) {
