@@ -2856,6 +2856,17 @@ static void update_workout_ui(bool animate_box) {
   if (s_app.geom.highlight_box_width > half_w - 4) s_app.geom.highlight_box_width = half_w - 4;
 
   text_layer_set_text_color(s_app.ui.rest_time_layer, active_color);
+  
+  if (s_app.state.is_resting) {
+    static char instant_rest_buf[16];
+    if (s_app.settings.dynamic_hr_target > 0) {
+      snprintf(instant_rest_buf, sizeof(instant_rest_buf), "--"); // Live HR will populate on the next tick
+    } else {
+      snprintf(instant_rest_buf, sizeof(instant_rest_buf), "%d", s_app.state.rest_seconds_remaining);
+    }
+    text_layer_set_text(s_app.ui.rest_time_layer, instant_rest_buf);
+  }
+  
   animate_highlight_box(animate_box);
 
   // Show note toast on exercise change (suppressed while resting so the toast
