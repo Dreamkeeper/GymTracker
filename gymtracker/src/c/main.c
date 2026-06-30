@@ -241,6 +241,7 @@ static GymTrackerApp s_app = {
   }
 };
 
+static char s_shared_text_buffer[256];
 static const char *s_sensation_titles[] = {"Unstoppable", "Strong", "Normal", "Exhausted", "Struggled"};
 static const char *s_sensation_subs[]   = {"Felt amazing!", "Hit targets well", "Got work done", "Completely drained", "Felt weak/off"};
 static const char *s_variations[]       = {
@@ -1229,13 +1230,46 @@ static void header_bg_update_proc(Layer *layer, GContext *ctx) {
 }
 
 static void settings_select_long_callback(MenuLayer *ml, MenuIndex *cell_index, void *data) {
+  // Keep the secret theme color easter egg!
   if (cell_index->section == 3 && cell_index->row == 0) {
     s_app.settings.theme_color_idx = (s_app.settings.theme_color_idx < 4) ? 4 : 0;
     save_setting(SK_THEME_COLOR, s_app.settings.theme_color_idx);
     vibes_double_pulse();
     menu_layer_reload_data(s_app.ui.settings_menu_layer);
     menu_layer_set_highlight_colors(s_app.ui.settings_menu_layer, get_theme_color(), get_bg_color());
+    return;
   }
+
+  // Tooltip Router
+  const char* tooltip = "No description available.";
+  
+  if (cell_index->section == 0) {
+    switch (cell_index->row) {
+      case 0: tooltip = "Set Rest:\nTriggered between regular sets of the same exercise."; break;
+      case 1: tooltip = "Exercise Rest:\nTriggered when transitioning to a brand new exercise."; break;
+      case 2: tooltip = "Super Rest:\nTriggered between linked exercises in a Superset or Giant Set."; break;
+      case 3: tooltip = "Drop Rest:\nA shorter rest period triggered automatically during Drop Sets."; break;
+      case 4: tooltip = "Dynamic Rest:\nAutomatically ends your rest period early if your Heart Rate drops below this target BPM."; break;
+    }
+  } else if (cell_index->section == 1) {
+    tooltip = "Haptics:\nChoose the vibration pattern that plays when this specific timer finishes.";
+  } else if (cell_index->section == 2) {
+    tooltip = "Drop Set %:\nThe percentage of weight automatically removed for the next set when performing a Drop Set.";
+  } else if (cell_index->section == 3) {
+    switch (cell_index->row) {
+      case 3: tooltip = "Dark Mode:\nAuto switches to a dark theme between 8PM and 7AM to save battery and reduce glare."; break;
+      case 4: tooltip = "Ghost Pacer:\nCompares your current workout pace against your last session in the rest timer window."; break;
+      case 5: tooltip = "Sensation Q:\nAsks how you felt at the end of the workout before syncing data."; break;
+      case 6: tooltip = "HR Sampling:\nHow often the watch saves your heart rate to calculate the workout average."; break;
+      case 7: tooltip = "UI Layout:\nSwaps the position of Reps and Weight on the screen."; break;
+    }
+  } else if (cell_index->section == 4) {
+    tooltip = "Shortcuts:\nBind a specific action to a long-press of the Up, Down, or Select button during a workout.";
+  }
+
+  // Display the tooltip
+  snprintf(s_shared_text_buffer, sizeof(s_shared_text_buffer), "%s", tooltip);
+  push_help_window();
 }
 
 static void settings_window_load(Window *window) {
@@ -1295,10 +1329,10 @@ static void help_window_load(Window *window) {
   Layer *w_layer = window_get_root_layer(window);
   GRect bounds   = layer_get_bounds(w_layer);
   s_app.ui.help_text_layer = build_text_layer(
-    GRect(10, 40, bounds.size.w - 20, bounds.size.h - 40),
-    FONT_KEY_GOTHIC_24_BOLD, GColorBlack, GTextAlignmentCenter, w_layer);
-  text_layer_set_text(s_app.ui.help_text_layer,
-    "Empty Slot\n\nOpen this app's settings on your phone to send a routine here.");
+    GRect(10, 20, bounds.size.w - 20, bounds.size.h - 20), // Tweak Y to give it room
+    FONT_KEY_GOTHIC_18_BOLD, GColorBlack, GTextAlignmentCenter, w_layer);
+    
+  text_layer_set_text(s_app.ui.help_text_layer, s_shared_text_buffer);
 }
 static void help_window_unload(Window *window) { text_layer_destroy(s_app.ui.help_text_layer); }
 
@@ -3343,7 +3377,10 @@ static void menu_select_callback(MenuLayer *ml, MenuIndex *cell_index, void *dat
   }
 
   if      (i < s_app.storage.active_slots) start_workout_from_slot(i);
-  else if (i == s_app.storage.active_slots && s_app.storage.active_slots < MAX_SLOTS) push_help_window();
+  else if (i == s_app.storage.active_slots && s_app.storage.active_slots < MAX_SLOTS) {
+    snprintf(s_shared_text_buffer, sizeof(s_shared_text_buffer), "Empty Slot\n\nOpen this app's settings on your phone to send a routine here.");
+    push_help_window();
+  }
   else push_settings_window();
 }
 
