@@ -192,7 +192,7 @@ typedef struct {
   #endif
 
   TextLayer *confirm_text_layer, *sum_title_layer, *sum_info_layer, *exit_text_layer;
-  TextLayer *rest_title_layer, *rest_time_layer, *rest_skip_layer;
+  TextLayer *rest_title_layer, *rest_time_layer, *rest_skip_layer, *rest_prep_layer;
   TextLayer *beat_layer, *missed_layer, *accuracy_layer, *density_layer, *note_text_layer;
   TextLayer *confirm_add_text_layer;
 
@@ -2867,6 +2867,64 @@ static void update_workout_ui(bool animate_box) {
     text_layer_set_text(s_app.ui.rest_time_layer, instant_rest_buf);
   }
   
+  // Dynamic layout adjustment for rest types
+  if (s_app.state.is_resting) {
+    GRect bounds = layer_get_bounds(window_get_root_layer(s_app.ui.workout_window));
+    
+    // 1. Ensure the timer is ALWAYS perfectly centered, full width
+    GRect time_frame = layer_get_frame(text_layer_get_layer(s_app.ui.rest_time_layer));
+    time_frame.origin.x = 0;
+    time_frame.size.w = bounds.size.w;
+    layer_set_frame(text_layer_get_layer(s_app.ui.rest_time_layer), time_frame);
+    text_layer_set_text_alignment(s_app.ui.rest_time_layer, GTextAlignmentCenter);
+    
+    bool show_prep = false;
+    
+    // Evaluate if we should show the Prep weight based on the UPCOMING exercise
+    if (s_app.state.curr_ex_idx < s_app.state.total_exercises) {
+      Exercise *ex = &s_app.state.exercises[s_app.state.curr_ex_idx];
+      
+      // Detect if the upcoming exercise is part of a Superset (2) or Giant Set (7)
+      bool is_linked = (ex->modifier == 2 || ex->modifier == 7) ||
+                       (s_app.state.curr_ex_idx > 0 && (s_app.state.exercises[s_app.state.curr_ex_idx - 1].modifier == 2 || s_app.state.exercises[s_app.state.curr_ex_idx - 1].modifier == 7)) ||
+                       (s_app.state.curr_ex_idx > 1 && s_app.state.exercises[s_app.state.curr_ex_idx - 2].modifier == 7);
+      
+      // Show Prep if it's the first set of ANY exercise, OR if we are constantly switching in a linked set
+      if (ex->current_set == 1 || is_linked) {
+        show_prep = true;
+      }
+    }
+    
+    if (show_prep) {
+      // 2. Define the "safe zone" dynamically for all screen sizes and shapes
+      int timer_half_width = 28; 
+      int dynamic_padding = bounds.size.w / 20; 
+      int safe_start_x = (bounds.size.w / 2) + timer_half_width + dynamic_padding;
+      int right_margin = PBL_IF_ROUND_ELSE(16, 2); 
+
+      GRect prep_frame = layer_get_frame(text_layer_get_layer(s_app.ui.rest_prep_layer));
+      prep_frame.origin.x = safe_start_x;
+      prep_frame.size.w = bounds.size.w - safe_start_x - right_margin;
+      
+      layer_set_frame(text_layer_get_layer(s_app.ui.rest_prep_layer), prep_frame);
+      text_layer_set_text_alignment(s_app.ui.rest_prep_layer, GTextAlignmentCenter);
+      
+      // 3. Build and display prep text
+      static char prep_buf[32];
+      if (active_target_weight == 0) {
+        snprintf(prep_buf, sizeof(prep_buf), "Prep:\nBW");
+      } else {
+        snprintf(prep_buf, sizeof(prep_buf), "Prep:\n%d%s", active_target_weight, s_app.settings.weight_unit_idx == 0 ? "kg" : "lb");
+      }
+      text_layer_set_text(s_app.ui.rest_prep_layer, prep_buf);
+      layer_set_hidden(text_layer_get_layer(s_app.ui.rest_prep_layer), false);
+      
+    } else {
+      // Regular set rest -> just hide the prep text
+      layer_set_hidden(text_layer_get_layer(s_app.ui.rest_prep_layer), true);
+    }
+  }
+  
   animate_highlight_box(animate_box);
 
   // Show note toast on exercise change (suppressed while resting so the toast
@@ -3026,8 +3084,21 @@ static void workout_window_load(Window *window) {
   s_app.ui.rest_title_layer = build_text_layer(GRect(0, r_title_y, bounds.size.w, 30),
     FONT_KEY_GOTHIC_24_BOLD, GColorBlack, GTextAlignmentCenter, s_app.ui.rest_overlay_layer);
   text_layer_set_text(s_app.ui.rest_title_layer, "REST");
+  
+  // The timer layer (starts full-width, centered)
   s_app.ui.rest_time_layer = build_text_layer(GRect(0, r_time_y, bounds.size.w, 45),
     FONT_KEY_BITHAM_42_BOLD, PBL_IF_COLOR_ELSE(GColorOrange, GColorBlack), GTextAlignmentCenter, s_app.ui.rest_overlay_layer);
+    
+  // The prep layer (dynamically scaled for large screens)
+  bool is_large_screen = (bounds.size.w >= 200);
+  const char *prep_font = is_large_screen ? FONT_KEY_GOTHIC_24_BOLD : FONT_KEY_GOTHIC_18_BOLD;
+  int prep_h = is_large_screen ? 64 : 50;
+  int prep_y_off = is_large_screen ? -2 : 2;
+
+  s_app.ui.rest_prep_layer = build_text_layer(GRect(bounds.size.w / 2, r_time_y + prep_y_off, bounds.size.w / 2, prep_h),
+    prep_font, GColorBlack, GTextAlignmentLeft, s_app.ui.rest_overlay_layer);
+  layer_set_hidden(text_layer_get_layer(s_app.ui.rest_prep_layer), true);
+  
   s_app.ui.rest_skip_layer = build_text_layer(GRect(0, r_skip_y, bounds.size.w, 20),
     FONT_KEY_GOTHIC_18, GColorBlack, GTextAlignmentCenter, s_app.ui.rest_overlay_layer);
   text_layer_set_text(s_app.ui.rest_skip_layer, "[Select] to Skip");
@@ -3132,6 +3203,7 @@ static void workout_window_unload(Window *window) {
   layer_destroy(s_app.ui.rest_overlay_layer);
   text_layer_destroy(s_app.ui.rest_title_layer);
   text_layer_destroy(s_app.ui.rest_time_layer);
+  text_layer_destroy(s_app.ui.rest_prep_layer);
   text_layer_destroy(s_app.ui.rest_skip_layer);
   layer_destroy(s_app.ui.highlight_layer);
   layer_destroy(s_app.ui.note_toast_text_layer);
