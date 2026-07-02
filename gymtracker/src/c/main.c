@@ -640,23 +640,35 @@ static void swap_exercise(void) {
   if (s_app.state.is_resting) return;
   if (s_app.state.curr_ex_idx + 1 >= s_app.state.total_exercises) return;
 
-  // Disallow reordering inside a superset OR a giant set (any of the 3 members)
-  if (s_app.state.exercises[s_app.state.curr_ex_idx].modifier == 2 ||
-      (s_app.state.curr_ex_idx > 0 &&
-       s_app.state.exercises[s_app.state.curr_ex_idx - 1].modifier == 2) ||
-      s_app.state.exercises[s_app.state.curr_ex_idx].modifier == 7 ||
-      (s_app.state.curr_ex_idx > 0 &&
-       s_app.state.exercises[s_app.state.curr_ex_idx - 1].modifier == 7)) {
+  int curr_idx = s_app.state.curr_ex_idx;
+  int next_idx = curr_idx + 1;
+
+  // Check if the CURRENT exercise is ANY part of a linked set (Anchor, 2nd, or 3rd member)
+  bool curr_is_linked = (
+      s_app.state.exercises[curr_idx].modifier == 2 ||
+      s_app.state.exercises[curr_idx].modifier == 7 ||
+      (curr_idx > 0 && s_app.state.exercises[curr_idx - 1].modifier == 2) ||
+      (curr_idx > 0 && s_app.state.exercises[curr_idx - 1].modifier == 7) ||
+      (curr_idx > 1 && s_app.state.exercises[curr_idx - 2].modifier == 7)
+  );
+
+  // Check if the NEXT exercise is the start (anchor) of a linked set
+  bool next_is_anchor = (
+      s_app.state.exercises[next_idx].modifier == 2 ||
+      s_app.state.exercises[next_idx].modifier == 7
+  );
+
+  // Disallow reordering if it breaks a Superset or Giant Set structure
+  if (curr_is_linked || next_is_anchor) {
     vibes_double_pulse();
     return;
   }
 
-  Exercise temp = s_app.state.exercises[s_app.state.curr_ex_idx];
-  int next_idx  = s_app.state.curr_ex_idx + 1;
-  s_app.state.exercises[s_app.state.curr_ex_idx] = s_app.state.exercises[next_idx];
+  Exercise temp = s_app.state.exercises[curr_idx];
+  s_app.state.exercises[curr_idx] = s_app.state.exercises[next_idx];
   s_app.state.exercises[next_idx] = temp;
 
-  init_temp_values(&s_app.state.exercises[s_app.state.curr_ex_idx]);
+  init_temp_values(&s_app.state.exercises[curr_idx]);
   update_workout_ui(true);
 }
 
@@ -1997,26 +2009,43 @@ static void push_variation_window(void) {
 }
 
 // ----------- Exercise Action Window -----------
+static bool is_exercise_linked_in_storage(int slot, int ex_idx, int total_exercises) {
+  Exercise temp_routine[MAX_EXERCISES];
+  for(int i = 0; i < total_exercises; i++) {
+    persist_read_data(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + i, &temp_routine[i], sizeof(Exercise));
+  }
+  return (
+    temp_routine[ex_idx].modifier == 2 || temp_routine[ex_idx].modifier == 7 ||
+    (ex_idx > 0 && temp_routine[ex_idx - 1].modifier == 2) ||
+    (ex_idx > 0 && temp_routine[ex_idx - 1].modifier == 7) ||
+    (ex_idx > 1 && temp_routine[ex_idx - 2].modifier == 7)
+  );
+}
+
 static void ex_action_move_up_callback(int index, void *ctx) {
   if (s_app.storage.exercise_to_edit > 0) {
     int slot = s_app.storage.slot_to_edit;
     int ex_idx = s_app.storage.exercise_to_edit;
 
-    // Read the current and the previous exercise
+    // BUG 1 FIX: Block breaking linked sets from the Inspector
+    if (is_exercise_linked_in_storage(slot, ex_idx, s_app.storage.slot_counts[slot]) ||
+        is_exercise_linked_in_storage(slot, ex_idx - 1, s_app.storage.slot_counts[slot])) {
+      vibes_double_pulse();
+      window_stack_pop(true);
+      return;
+    }
+
     Exercise ex1, ex2;
     persist_read_data(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + ex_idx, &ex1, sizeof(Exercise));
     persist_read_data(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + ex_idx - 1, &ex2, sizeof(Exercise));
 
-    // Swap them in permanent memory!
     persist_write_data(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + ex_idx - 1, &ex1, sizeof(Exercise));
     persist_write_data(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + ex_idx, &ex2, sizeof(Exercise));
 
-    // FIX: Synchronize live memory if the user is currently working out in this routine!
     if (s_app.state.active && s_app.state.current_slot == slot) {
       s_app.state.exercises[ex_idx - 1] = ex1;
       s_app.state.exercises[ex_idx] = ex2;
 
-      // Track the pointer so the workout doesn't suddenly jump to the wrong exercise
       if (s_app.state.curr_ex_idx == ex_idx) {
         s_app.state.curr_ex_idx--;
       } else if (s_app.state.curr_ex_idx == ex_idx - 1) {
@@ -2029,13 +2058,21 @@ static void ex_action_move_up_callback(int index, void *ctx) {
     vibes_short_pulse();
     menu_layer_reload_data(s_app.ui.inspector_menu_layer);
   }
-  window_stack_pop(true); // Return to the inspector
+  window_stack_pop(true);
 }
 
 static void ex_action_move_down_callback(int index, void *ctx) {
   int slot = s_app.storage.slot_to_edit;
   if (s_app.storage.exercise_to_edit < s_app.storage.slot_counts[slot] - 1) {
     int ex_idx = s_app.storage.exercise_to_edit;
+
+    // BUG 1 FIX: Block breaking linked sets from the Inspector
+    if (is_exercise_linked_in_storage(slot, ex_idx, s_app.storage.slot_counts[slot]) ||
+        is_exercise_linked_in_storage(slot, ex_idx + 1, s_app.storage.slot_counts[slot])) {
+      vibes_double_pulse();
+      window_stack_pop(true);
+      return;
+    }
 
     Exercise ex1, ex2;
     persist_read_data(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + ex_idx, &ex1, sizeof(Exercise));
@@ -2044,7 +2081,6 @@ static void ex_action_move_down_callback(int index, void *ctx) {
     persist_write_data(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + ex_idx + 1, &ex1, sizeof(Exercise));
     persist_write_data(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + ex_idx, &ex2, sizeof(Exercise));
 
-    // FIX: Synchronize live memory if the user is currently working out in this routine!
     if (s_app.state.active && s_app.state.current_slot == slot) {
       s_app.state.exercises[ex_idx + 1] = ex1;
       s_app.state.exercises[ex_idx] = ex2;
@@ -2068,28 +2104,51 @@ static void ex_action_delete_callback(int index, void *ctx) {
   int slot = s_app.storage.slot_to_edit;
   int ex_idx = s_app.storage.exercise_to_edit;
   RoutineHeader header;
-
   persist_read_data(STORAGE_KEY_BASE + slot, &header, sizeof(RoutineHeader));
 
-  // Read the deleted exercise so we know how many sets to subtract later
+  // BUG 2 FIX: Zombie Routine Crash Prevention
+  if (header.total_exercises <= 1) {
+    persist_delete(STORAGE_KEY_BASE + slot);
+    persist_delete(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + 0);
+    persist_delete(LAST_COMPLETED_KEY_BASE + slot);
+    
+    if (s_app.state.active && s_app.state.current_slot == slot) {
+      s_app.state.active = false;
+      window_stack_remove(s_app.ui.workout_window, false);
+    }
+    
+    vibes_double_pulse();
+    refresh_directory();
+    menu_layer_reload_data(s_app.ui.menu_layer);
+    
+    // Nuke the UI stack back to the Main Menu
+    window_stack_remove(s_app.ui.ex_action_window, false);
+    window_stack_remove(s_app.ui.inspector_window, false);
+    window_stack_pop(true); 
+    return;
+  }
+
+  // BUG 1 FIX: Block deleting linked sets from the Inspector
+  if (is_exercise_linked_in_storage(slot, ex_idx, header.total_exercises)) {
+    vibes_double_pulse();
+    window_stack_pop(true);
+    return;
+  }
+
   Exercise deleted_ex;
   persist_read_data(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + ex_idx, &deleted_ex, sizeof(Exercise));
 
-  // Shift everything below the deleted exercise UP by 1
   for (int i = ex_idx; i < header.total_exercises - 1; i++) {
     Exercise next_ex;
     persist_read_data(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + i + 1, &next_ex, sizeof(Exercise));
     persist_write_data(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + i, &next_ex, sizeof(Exercise));
   }
 
-  // Delete the final dangling exercise
   persist_delete(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + header.total_exercises - 1);
-
   header.total_exercises--;
   persist_write_data(STORAGE_KEY_BASE + slot, &header, sizeof(RoutineHeader));
   s_app.storage.slot_counts[slot] = header.total_exercises;
 
-  // FIX: Synchronize live memory if the user is currently working out in this routine!
   if (s_app.state.active && s_app.state.current_slot == slot) {
     for (int i = ex_idx; i < s_app.state.total_exercises - 1; i++) {
       s_app.state.exercises[i] = s_app.state.exercises[i + 1];
@@ -2097,15 +2156,12 @@ static void ex_action_delete_callback(int index, void *ctx) {
     s_app.state.total_exercises--;
     s_app.state.total_workout_sets -= deleted_ex.target_sets;
 
-    // Shift the active workout UI safely
     if (s_app.state.curr_ex_idx > ex_idx) {
       s_app.state.curr_ex_idx--;
     } else if (s_app.state.curr_ex_idx == ex_idx) {
       if (s_app.state.curr_ex_idx >= s_app.state.total_exercises) {
         s_app.state.curr_ex_idx = s_app.state.total_exercises > 0 ? s_app.state.total_exercises - 1 : 0;
       }
-
-      // If they deleted the very last exercise mid-workout, exit safely!
       if (s_app.state.total_exercises > 0) {
         init_temp_values(&s_app.state.exercises[s_app.state.curr_ex_idx]);
       } else {
@@ -2122,7 +2178,7 @@ static void ex_action_delete_callback(int index, void *ctx) {
 
   vibes_double_pulse();
   menu_layer_reload_data(s_app.ui.inspector_menu_layer);
-  menu_layer_reload_data(s_app.ui.menu_layer); // Update the main menu count too
+  menu_layer_reload_data(s_app.ui.menu_layer); 
   window_stack_pop(true);
 }
 
