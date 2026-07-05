@@ -2881,15 +2881,16 @@ static void update_workout_ui(bool animate_box) {
   }
 
   // =====================================================================
-  // 3. THE FREEZE: Stop here if the overlay is actively sliding up!
-  // =====================================================================
-  bool is_sliding_up = (s_app.ui.rest_anim != NULL && s_app.state.is_resting);
-  if (is_sliding_up) {
-    return;
-  }
-
-  // =====================================================================
-  // 4. BACKGROUND UPDATES (Runs ONLY when not sliding)
+  // 3. BACKGROUND UPDATES
+  // (The 93e067f "FREEZE" early-return was removed: it caused the
+  // workout screen to stay frozen on the previous exercise's data
+  // when navigating into a giant-set 2nd/3rd member, and in some
+  // skip-rest races the background was never refreshed at all,
+  // leaving the new exercise's name/sets/reps/weight blank with
+  // the "1 of 0" / "NEXT:" symptoms. We now always run the
+  // background update; the rest overlay is layered above it and
+  // covers the workout screen while resting, so there is no
+  // visible artifact from updating underneath.)
   // =====================================================================
   bool is_tall   = (bounds.size.h > 180);
   int name_len   = strlen(ex->name);
