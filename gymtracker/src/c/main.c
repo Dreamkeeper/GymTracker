@@ -2814,83 +2814,9 @@ static void update_workout_ui(bool animate_box) {
   }
 
   // =====================================================================
-  // 2. ALWAYS UPDATE REST OVERLAY (So it has the correct new weight)
-  // =====================================================================
-  text_layer_set_text_color(s_app.ui.rest_time_layer, get_theme_color());
-
-  if (s_app.state.is_resting) {
-    static char instant_rest_buf[16];
-    if (s_app.settings.dynamic_hr_target > 0) {
-      snprintf(instant_rest_buf, sizeof(instant_rest_buf), "--"); // Live HR will populate on the next tick
-    } else {
-      snprintf(instant_rest_buf, sizeof(instant_rest_buf), "%d", s_app.state.rest_seconds_remaining);
-    }
-    text_layer_set_text(s_app.ui.rest_time_layer, instant_rest_buf);
-
-    // Dynamic layout adjustment for rest types
-    // Ensure the timer is ALWAYS perfectly centered, full width
-    GRect time_frame = layer_get_frame(text_layer_get_layer(s_app.ui.rest_time_layer));
-    time_frame.origin.x = 0;
-    time_frame.size.w = bounds.size.w;
-    layer_set_frame(text_layer_get_layer(s_app.ui.rest_time_layer), time_frame);
-    text_layer_set_text_alignment(s_app.ui.rest_time_layer, GTextAlignmentCenter);
-
-    bool show_prep = false;
-
-    // Evaluate if we should show the Prep weight based on the UPCOMING exercise
-    if (s_app.state.curr_ex_idx < s_app.state.total_exercises) {
-      // Detect if the upcoming exercise is part of a Superset (2) or Giant Set (7)
-      bool is_linked = (ex->modifier == 2 || ex->modifier == 7) ||
-                       (s_app.state.curr_ex_idx > 0 && (s_app.state.exercises[s_app.state.curr_ex_idx - 1].modifier == 2 || s_app.state.exercises[s_app.state.curr_ex_idx - 1].modifier == 7)) ||
-                       (s_app.state.curr_ex_idx > 1 && s_app.state.exercises[s_app.state.curr_ex_idx - 2].modifier == 7);
-
-      // Show Prep if it's the first set of ANY exercise, OR if we are constantly switching in a linked set
-      if (ex->current_set == 1 || is_linked) {
-        show_prep = true;
-      }
-    }
-
-    if (show_prep) {
-      // Define the "safe zone" dynamically for all screen sizes and shapes
-      int timer_half_width = 28; 
-      int dynamic_padding = bounds.size.w / 20; 
-      int safe_start_x = (bounds.size.w / 2) + timer_half_width + dynamic_padding;
-      int right_margin = PBL_IF_ROUND_ELSE(16, 2); 
-
-      GRect prep_frame = layer_get_frame(text_layer_get_layer(s_app.ui.rest_prep_layer));
-      prep_frame.origin.x = safe_start_x;
-      prep_frame.size.w = bounds.size.w - safe_start_x - right_margin;
-      
-      layer_set_frame(text_layer_get_layer(s_app.ui.rest_prep_layer), prep_frame);
-      text_layer_set_text_alignment(s_app.ui.rest_prep_layer, GTextAlignmentCenter);
-      
-      // Build and display prep text
-      static char prep_buf[32];
-      if (active_target_weight == 0) {
-        snprintf(prep_buf, sizeof(prep_buf), "Prep:\nBW");
-      } else {
-        snprintf(prep_buf, sizeof(prep_buf), "Prep:\n%d%s", active_target_weight, s_app.settings.weight_unit_idx == 0 ? "kg" : "lb");
-      }
-      text_layer_set_text(s_app.ui.rest_prep_layer, prep_buf);
-      layer_set_hidden(text_layer_get_layer(s_app.ui.rest_prep_layer), false);
-      
-    } else {
-      // Regular set rest -> just hide the prep text
-      layer_set_hidden(text_layer_get_layer(s_app.ui.rest_prep_layer), true);
-    }
-  }
-
-  // =====================================================================
-  // 3. BACKGROUND UPDATES
-  // (The 93e067f "FREEZE" early-return was removed: it caused the
-  // workout screen to stay frozen on the previous exercise's data
-  // when navigating into a giant-set 2nd/3rd member, and in some
-  // skip-rest races the background was never refreshed at all,
-  // leaving the new exercise's name/sets/reps/weight blank with
-  // the "1 of 0" / "NEXT:" symptoms. We now always run the
-  // background update; the rest overlay is layered above it and
-  // covers the workout screen while resting, so there is no
-  // visible artifact from updating underneath.)
+  // 2. BACKGROUND UPDATES (Always runs first so the exercise
+  // name/sets/reps/weight are fully rendered before the rest
+  // overlay configures its prep screen on top.)
   // =====================================================================
   bool is_tall   = (bounds.size.h > 180);
   int name_len   = strlen(ex->name);
@@ -3035,6 +2961,73 @@ static void update_workout_ui(bool animate_box) {
   if (!s_app.state.is_resting && s_app.state.curr_ex_idx != s_app.state.note_toast_prev_ex_idx) {
     s_app.state.note_toast_prev_ex_idx = s_app.state.curr_ex_idx;
     show_note_toast();
+  }
+  // =====================================================================
+  // 3. ALWAYS UPDATE REST OVERLAY (Configured after background so it
+  // layers correctly over the fully rendered workout screen.)
+  // =====================================================================
+  text_layer_set_text_color(s_app.ui.rest_time_layer, get_theme_color());
+
+  if (s_app.state.is_resting) {
+    static char instant_rest_buf[16];
+    if (s_app.settings.dynamic_hr_target > 0) {
+      snprintf(instant_rest_buf, sizeof(instant_rest_buf), "--"); // Live HR will populate on the next tick
+    } else {
+      snprintf(instant_rest_buf, sizeof(instant_rest_buf), "%d", s_app.state.rest_seconds_remaining);
+    }
+    text_layer_set_text(s_app.ui.rest_time_layer, instant_rest_buf);
+
+    // Dynamic layout adjustment for rest types
+    // Ensure the timer is ALWAYS perfectly centered, full width
+    GRect time_frame = layer_get_frame(text_layer_get_layer(s_app.ui.rest_time_layer));
+    time_frame.origin.x = 0;
+    time_frame.size.w = bounds.size.w;
+    layer_set_frame(text_layer_get_layer(s_app.ui.rest_time_layer), time_frame);
+    text_layer_set_text_alignment(s_app.ui.rest_time_layer, GTextAlignmentCenter);
+
+    bool show_prep = false;
+
+    // Evaluate if we should show the Prep weight based on the UPCOMING exercise
+    if (s_app.state.curr_ex_idx < s_app.state.total_exercises) {
+      // Detect if the upcoming exercise is part of a Superset (2) or Giant Set (7)
+      bool is_linked = (ex->modifier == 2 || ex->modifier == 7) ||
+                       (s_app.state.curr_ex_idx > 0 && (s_app.state.exercises[s_app.state.curr_ex_idx - 1].modifier == 2 || s_app.state.exercises[s_app.state.curr_ex_idx - 1].modifier == 7)) ||
+                       (s_app.state.curr_ex_idx > 1 && s_app.state.exercises[s_app.state.curr_ex_idx - 2].modifier == 7);
+
+      // Show Prep if it's the first set of ANY exercise, OR if we are constantly switching in a linked set
+      if (ex->current_set == 1 || is_linked) {
+        show_prep = true;
+      }
+    }
+
+    if (show_prep) {
+      // Define the "safe zone" dynamically for all screen sizes and shapes
+      int timer_half_width = 28; 
+      int dynamic_padding = bounds.size.w / 20; 
+      int safe_start_x = (bounds.size.w / 2) + timer_half_width + dynamic_padding;
+      int right_margin = PBL_IF_ROUND_ELSE(16, 2); 
+
+      GRect prep_frame = layer_get_frame(text_layer_get_layer(s_app.ui.rest_prep_layer));
+      prep_frame.origin.x = safe_start_x;
+      prep_frame.size.w = bounds.size.w - safe_start_x - right_margin;
+      
+      layer_set_frame(text_layer_get_layer(s_app.ui.rest_prep_layer), prep_frame);
+      text_layer_set_text_alignment(s_app.ui.rest_prep_layer, GTextAlignmentCenter);
+      
+      // Build and display prep text
+      static char prep_buf[32];
+      if (active_target_weight == 0) {
+        snprintf(prep_buf, sizeof(prep_buf), "Prep:\nBW");
+      } else {
+        snprintf(prep_buf, sizeof(prep_buf), "Prep:\n%d%s", active_target_weight, s_app.settings.weight_unit_idx == 0 ? "kg" : "lb");
+      }
+      text_layer_set_text(s_app.ui.rest_prep_layer, prep_buf);
+      layer_set_hidden(text_layer_get_layer(s_app.ui.rest_prep_layer), false);
+      
+    } else {
+      // Regular set rest -> just hide the prep text
+      layer_set_hidden(text_layer_get_layer(s_app.ui.rest_prep_layer), true);
+    }
   }
 }
 
