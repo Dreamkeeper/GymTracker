@@ -712,10 +712,10 @@ static void perform_true_skip(void) {
       layer_mark_dirty(s_app.ui.progress_layer);
       update_workout_ui(true);
     } else {
+      window_stack_remove(s_app.ui.workout_window, false);
       vibes_double_pulse();
       if (s_app.settings.enable_sensation) push_sensation_window();
       else push_summary_window();
-      window_stack_remove(s_app.ui.workout_window, false);
     }
     return;
   }
@@ -750,10 +750,10 @@ static void perform_true_skip(void) {
     layer_mark_dirty(s_app.ui.progress_layer);
     update_workout_ui(true);
   } else {
+    window_stack_remove(s_app.ui.workout_window, false);
     vibes_double_pulse();
     if (s_app.settings.enable_sensation) push_sensation_window();
     else push_summary_window();
-    window_stack_remove(s_app.ui.workout_window, false);
   }
 }
 
@@ -805,10 +805,10 @@ static void perform_finish_set(void) {
           s_app.state.rest_seconds_remaining = s_app.settings.ex_rest_sec;
           play_vibe(s_app.settings.ex_vibe);
         } else {
+          window_stack_remove(s_app.ui.workout_window, false);
           vibes_double_pulse();
           if (s_app.settings.enable_sensation) push_sensation_window();
           else push_summary_window();
-          window_stack_remove(s_app.ui.workout_window, false);
           return;
         }
       } else {
@@ -847,10 +847,10 @@ static void perform_finish_set(void) {
         s_app.state.rest_seconds_remaining = s_app.settings.ex_rest_sec;
         play_vibe(s_app.settings.ex_vibe);
       } else {
+        window_stack_remove(s_app.ui.workout_window, false);
         vibes_double_pulse();
         if (s_app.settings.enable_sensation) push_sensation_window();
         else push_summary_window();
-        window_stack_remove(s_app.ui.workout_window, false);
         return;
       }
     }
@@ -868,10 +868,10 @@ static void perform_finish_set(void) {
         s_app.state.rest_seconds_remaining = s_app.settings.ex_rest_sec;
         play_vibe(s_app.settings.ex_vibe);
       } else {
+        window_stack_remove(s_app.ui.workout_window, false);
         vibes_double_pulse();
         if (s_app.settings.enable_sensation) push_sensation_window();
         else push_summary_window();
-        window_stack_remove(s_app.ui.workout_window, false);
         return;
       }
     }
@@ -1484,10 +1484,10 @@ static void exit_select_click(ClickRecognizerRef recognizer, void *context) {
   s_app.state.active    = false;
   persist_delete(ACTIVE_STATE_KEY);
   vibes_double_pulse();
+  window_stack_remove(s_app.ui.exit_window,    false);
+  window_stack_remove(s_app.ui.workout_window, false);
   if (s_app.settings.enable_sensation) push_sensation_window();
   else push_summary_window();
-  window_stack_remove(s_app.ui.workout_window, false);
-  window_stack_remove(s_app.ui.exit_window,    false);
 }
 static void exit_down_click(ClickRecognizerRef recognizer, void *context) {
   s_app.state.is_paused   = false;
