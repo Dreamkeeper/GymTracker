@@ -42,6 +42,7 @@ typedef enum {
   SK_DYNAMIC_HR    = 18,
   SK_ENABLE_GHOST  = 19,
   SK_ENABLE_SENS   = 20,
+  SK_NOTE_TOAST    = 21,
   SK_HR_RATE       = 22,
   SK_SWAP_UI       = 23,
 } SettingsKey;
@@ -103,6 +104,7 @@ typedef struct {
   int enable_sensation;
   int hr_sample_rate;
   int swap_reps_weight;
+  int note_toast_mode;
 } AppSettings;
 
 typedef struct {
@@ -174,6 +176,7 @@ typedef struct {
   Animation *rest_anim;
   Animation *note_toast_anim;
 
+  AppTimer *note_toast_dismiss_timer;
   AppTimer *note_toast_scroll_timer;
   char note_toast_text[32];
   int16_t note_toast_text_width;
@@ -221,7 +224,7 @@ static GymTrackerApp s_app = {
     .long_press_ms = 500, .drop_set_pct = 20, .last_routine_slot = 0, .dark_mode = 0,
     .shortcut_up = 1, .shortcut_down = 2, .shortcut_select = 4, .dynamic_hr_target = 0,
     .progression_mode = -1, .weight_increment = 2, .enable_ghost = 1, .enable_sensation = 1,
-    .hr_sample_rate = 1, .swap_reps_weight = 0
+    .hr_sample_rate = 1, .swap_reps_weight = 0, .note_toast_mode = 0
   },
   .state = {
     .active = false, .has_resume = false, .is_paused = false, .is_resting = false,
@@ -279,7 +282,9 @@ static void init_temp_values(Exercise *ex);
 
 static void show_note_toast(void);
 static void hide_note_toast(bool animated);
+static void note_toast_dismiss_cb(void *ctx);
 static void note_toast_scroll_cb(void *ctx);
+static void update_note_toast_visibility(void);
 static void note_toast_text_update_proc(Layer *layer, GContext *ctx);
 static void note_toast_bg_update_proc(Layer *layer, GContext *ctx);
 static void note_toast_acc_update_proc(Layer *layer, GContext *ctx);
@@ -428,6 +433,7 @@ static void load_settings(void) {
   if (persist_exists(SETTINGS_KEY_BASE + SK_ENABLE_SENS)) s_app.settings.enable_sensation = persist_read_int(SETTINGS_KEY_BASE + SK_ENABLE_SENS);
   if (persist_exists(SETTINGS_KEY_BASE + SK_HR_RATE))     s_app.settings.hr_sample_rate   = persist_read_int(SETTINGS_KEY_BASE + SK_HR_RATE);
   if (persist_exists(SETTINGS_KEY_BASE + SK_SWAP_UI))     s_app.settings.swap_reps_weight = persist_read_int(SETTINGS_KEY_BASE + SK_SWAP_UI);
+  if (persist_exists(SETTINGS_KEY_BASE + SK_NOTE_TOAST))  s_app.settings.note_toast_mode  = persist_read_int(SETTINGS_KEY_BASE + SK_NOTE_TOAST);
 }
 
 static void save_setting(SettingsKey key, int value) {
@@ -1074,7 +1080,7 @@ static uint16_t settings_get_num_rows_callback(MenuLayer *ml, uint16_t section, 
   if (section == 0) return 5;
   if (section == 1) return 3;
   if (section == 2) return 1;
-  if (section == 3) return 8;
+  if (section == 3) return 9;
   if (section == 4) return 3;
   return 0;
 }
@@ -1149,6 +1155,17 @@ static void settings_draw_row_callback(GContext *ctx, const Layer *cell_layer,
         snprintf(title, sizeof(title), "UI Layout");
         snprintf(subtitle, sizeof(subtitle), s_app.settings.swap_reps_weight ? "Weight | Reps" : "Reps | Weight");
         break;
+      case 8: {
+        static const char *toast_modes[] = {
+          "Auto 8s", "Auto 15s", "Auto 20s",
+          "Perm. Workout", "Perm. Rest", "Perm. Both"
+        };
+        int mode = s_app.settings.note_toast_mode;
+        if (mode < 0 || mode > 5) mode = 0;
+        snprintf(title, sizeof(title), "Note Toast");
+        snprintf(subtitle, sizeof(subtitle), "%s", toast_modes[mode]);
+        break;
+      }
     }
   } else if (cell_index->section == 4) {
     static const char *actions[] = {"Variations","View Note","Swap (Later)","Skip Entirely","Finish Set","Skip Set","Voice Note", "Add Ex. (Voice)"};
@@ -1223,6 +1240,12 @@ static void settings_select_callback(MenuLayer *ml, MenuIndex *cell_index, void 
         s_app.settings.swap_reps_weight = !s_app.settings.swap_reps_weight;
         save_setting(SK_SWAP_UI, s_app.settings.swap_reps_weight);
         break;
+      case 8:
+        s_app.settings.note_toast_mode++;
+        if (s_app.settings.note_toast_mode > 5) s_app.settings.note_toast_mode = 0;
+        save_setting(SK_NOTE_TOAST, s_app.settings.note_toast_mode);
+        update_note_toast_visibility();
+        break;
     }
   } else if (cell_index->section == 4) {
     switch (cell_index->row) {
@@ -1272,6 +1295,7 @@ static void settings_select_long_callback(MenuLayer *ml, MenuIndex *cell_index, 
       case 5: tooltip = "Sensation Q:\nAsks how you felt at the end of the workout before syncing data."; break;
       case 6: tooltip = "HR Sampling:\nHow often the watch saves your heart rate to calculate the workout average."; break;
       case 7: tooltip = "UI Layout:\nSwaps the position of Reps and Weight on the screen."; break;
+      case 8: tooltip = "Note Toast:\nHow long the exercise-note banner stays on screen.\nAuto 8s/15s/20s: dismisses after delay, hidden in rest.\nPerm. Workout/Rest/Both: always visible."; break;
     }
   } else if (cell_index->section == 4) {
     tooltip = "Shortcuts:\nBind a specific action to a long-press of the Up, Down, or Select button during a workout.";
@@ -2479,7 +2503,9 @@ static void rest_anim_stopped_handler(Animation *animation, bool finished, void 
 #define NOTE_TOAST_H_TALL_RND   36
 #define NOTE_TOAST_H_SHORT_RND  28
 #define NOTE_TOAST_ANIM_MS      200
-#define NOTE_TOAST_DISMISS_MS   8000
+#define NOTE_TOAST_DISMISS_MS_8   8000
+#define NOTE_TOAST_DISMISS_MS_15 15000
+#define NOTE_TOAST_DISMISS_MS_20 20000
 #define NOTE_TOAST_SCROLL_MS    50
 #define NOTE_TOAST_SCROLL_PAUSE 30  // ticks (~1.5s at 50ms)
 
@@ -2544,6 +2570,49 @@ static void note_toast_anim_stopped_handler(Animation *animation, bool finished,
   }
 }
 
+static void note_toast_dismiss_cb(void *ctx) {
+  s_app.ui.note_toast_dismiss_timer = NULL;
+  hide_note_toast(true);
+}
+
+static void update_note_toast_visibility(void) {
+  // Centralised visibility/dismiss logic driven by SK_NOTE_TOAST.
+  // Modes 0/1/2: auto-dismiss with 8/15/20s timer; suppressed during rest.
+  // Mode 3:      permanent during active sets, hidden during rest.
+  // Mode 4:      permanent during rest, hidden during active sets.
+  // Mode 5:      permanent always.
+  int mode = s_app.settings.note_toast_mode;
+  if (mode < 0) mode = 0;
+  if (mode > 5) mode = 5;
+
+  if (s_app.ui.note_toast_dismiss_timer) {
+    app_timer_cancel(s_app.ui.note_toast_dismiss_timer);
+    s_app.ui.note_toast_dismiss_timer = NULL;
+  }
+
+  if (mode <= 2) {
+    if (s_app.state.is_resting) {
+      hide_note_toast(false);
+      return;
+    }
+    show_note_toast();
+    int dismiss_ms = (mode == 1) ? NOTE_TOAST_DISMISS_MS_15
+                    : (mode == 2) ? NOTE_TOAST_DISMISS_MS_20
+                    : NOTE_TOAST_DISMISS_MS_8;
+    s_app.ui.note_toast_dismiss_timer =
+      app_timer_register(dismiss_ms, note_toast_dismiss_cb, NULL);
+  } else if (mode == 3) {
+    if (s_app.state.is_resting) hide_note_toast(false);
+    else                        show_note_toast();
+  } else if (mode == 4) {
+    if (s_app.state.is_resting) show_note_toast();
+    else                        hide_note_toast(false);
+  } else {
+    // mode == 5: always on (when the current exercise has a note)
+    show_note_toast();
+  }
+}
+
 static void note_toast_scroll_cb(void *ctx) {
   s_app.ui.note_toast_scroll_timer = NULL;
   if (!s_app.ui.note_toast_visible) return;
@@ -2571,6 +2640,7 @@ static void show_note_toast(void) {
   if (!s_app.ui.workout_window) return;
   if (!s_app.ui.note_toast_layer) return;  // created in workout_window_load
   if (s_app.state.curr_ex_idx >= s_app.state.total_exercises) return;
+  if (s_app.state.is_resting) return;
 
   Exercise *ex = &s_app.state.exercises[s_app.state.curr_ex_idx];
   if (ex->comment[0] == '\0') {
@@ -2595,7 +2665,11 @@ static void show_note_toast(void) {
     animation_unschedule(s_app.ui.note_toast_anim);
     s_app.ui.note_toast_anim = NULL;
   }
-  // Cancel any scroll timer from a prior toast
+  // Cancel timers from any prior toast
+  if (s_app.ui.note_toast_dismiss_timer) {
+    app_timer_cancel(s_app.ui.note_toast_dismiss_timer);
+    s_app.ui.note_toast_dismiss_timer = NULL;
+  }
   if (s_app.ui.note_toast_scroll_timer) {
     app_timer_cancel(s_app.ui.note_toast_scroll_timer);
     s_app.ui.note_toast_scroll_timer = NULL;
@@ -2620,9 +2694,9 @@ static void show_note_toast(void) {
     (AnimationHandlers){ .stopped = note_toast_anim_stopped_handler }, NULL);
   animation_schedule(s_app.ui.note_toast_anim);
 
-  // No auto-dismiss: the toast now stays visible for the duration of the
-  // current exercise's sets and rests. It is hidden/refreshed only when
-  // update_workout_ui detects an exercise change.
+  // Auto-dismiss timer is scheduled by update_note_toast_visibility() so the
+  // chosen SK_NOTE_TOAST mode can dictate the duration (8s/15s/20s) or omit
+  // it entirely (persistent modes 3/4/5).
 
   // Schedule scroll if text is wider than visible area
   int16_t visible_w = layer_get_bounds(s_app.ui.note_toast_text_layer).size.w;
@@ -2641,6 +2715,10 @@ static void hide_note_toast(bool animated) {
     return;
   }
 
+  if (s_app.ui.note_toast_dismiss_timer) {
+    app_timer_cancel(s_app.ui.note_toast_dismiss_timer);
+    s_app.ui.note_toast_dismiss_timer = NULL;
+  }
   if (s_app.ui.note_toast_scroll_timer) {
     app_timer_cancel(s_app.ui.note_toast_scroll_timer);
     s_app.ui.note_toast_scroll_timer = NULL;
@@ -2753,6 +2831,10 @@ static void set_rest_overlay_state(bool is_resting, bool animated) {
   Layer *w_layer = window_get_root_layer(s_app.ui.workout_window);
   GRect bounds   = layer_get_bounds(w_layer);
   int rest_box_height = s_app.geom.line2_y - s_app.geom.line1_y;
+
+  // Re-evaluate note-toast visibility whenever the rest state changes. Each
+  // SK_NOTE_TOAST mode has different rules for resting vs. active sets.
+  update_note_toast_visibility();
 
   GRect on_screen  = GRect(0, s_app.geom.line1_y, bounds.size.w, rest_box_height);
   GRect off_screen = GRect(0, bounds.size.h,       bounds.size.w, rest_box_height);
@@ -2938,12 +3020,11 @@ static void update_workout_ui(bool animate_box) {
 
   animate_highlight_box(animate_box);
 
-  // Show/update note toast on exercise change. Toast stays visible across
-  // sets and rests for the current exercise; an exercise with no note is
-  // hidden via the empty-comment early-out inside show_note_toast().
+  // Show/update note toast on exercise change. Visibility (auto-dismiss or
+  // persistent) is governed by SK_NOTE_TOAST via update_note_toast_visibility.
   if (s_app.state.curr_ex_idx != s_app.state.note_toast_prev_ex_idx) {
     s_app.state.note_toast_prev_ex_idx = s_app.state.curr_ex_idx;
-    show_note_toast();
+    update_note_toast_visibility();
   }
   // =====================================================================
   // 3. ALWAYS UPDATE REST OVERLAY (Configured after background so it
@@ -3211,6 +3292,7 @@ static void workout_window_load(Window *window) {
   s_app.ui.note_toast_text_width = 0;
   s_app.ui.note_toast_scroll_offset = NOTE_TOAST_TEXT_PADDING;
   s_app.ui.note_toast_scroll_pause_until = 0;
+  s_app.ui.note_toast_dismiss_timer = NULL;
   s_app.ui.note_toast_scroll_timer = NULL;
   s_app.ui.note_toast_anim = NULL;
   s_app.ui.note_toast_visible = false;
@@ -3259,6 +3341,7 @@ static void workout_window_unload(Window *window) {
   if (s_app.ui.box_anim)  { animation_unschedule(s_app.ui.box_anim);  s_app.ui.box_anim  = NULL; }
   if (s_app.ui.rest_anim) { animation_unschedule(s_app.ui.rest_anim); s_app.ui.rest_anim = NULL; }
   if (s_app.ui.note_toast_anim) { animation_unschedule(s_app.ui.note_toast_anim); s_app.ui.note_toast_anim = NULL; }
+  if (s_app.ui.note_toast_dismiss_timer) { app_timer_cancel(s_app.ui.note_toast_dismiss_timer); s_app.ui.note_toast_dismiss_timer = NULL; }
   if (s_app.ui.note_toast_scroll_timer)   { app_timer_cancel(s_app.ui.note_toast_scroll_timer);   s_app.ui.note_toast_scroll_timer   = NULL; }
 
   layer_destroy(s_app.ui.progress_layer);
