@@ -907,8 +907,10 @@ static void dictation_session_callback(DictationSession *session, DictationSessi
     snprintf(s_app.state.exercises[s_app.state.curr_ex_idx].comment,
              sizeof(s_app.state.exercises[0].comment), "%s", transcription);
     vibes_short_pulse();
-    // Reflect the newly dictated note immediately on the toast.
-    show_note_toast();
+    // Reflect the newly dictated note immediately on the toast, respecting
+    // the current SK_NOTE_TOAST mode (e.g. don't show during rest in
+    // modes 0/1/2/3; do show in modes 4/5).
+    update_note_toast_visibility();
   }
 }
 
@@ -2640,7 +2642,12 @@ static void show_note_toast(void) {
   if (!s_app.ui.workout_window) return;
   if (!s_app.ui.note_toast_layer) return;  // created in workout_window_load
   if (s_app.state.curr_ex_idx >= s_app.state.total_exercises) return;
-  if (s_app.state.is_resting) return;
+  // NOTE: Previously this function early-returned when is_resting was true.
+  // That guard was correct under the old "toast only during active sets" design
+  // but breaks SK_NOTE_TOAST modes 4 (Perm. Rest) and 5 (Perm. Both), which
+  // intentionally want the toast visible during rest. Visibility-during-rest
+  // is now decided per-mode by update_note_toast_visibility() before calling
+  // this function, so this guard is no longer needed.
 
   Exercise *ex = &s_app.state.exercises[s_app.state.curr_ex_idx];
   if (ex->comment[0] == '\0') {
