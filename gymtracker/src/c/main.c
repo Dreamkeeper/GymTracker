@@ -161,7 +161,7 @@ typedef struct {
 typedef struct {
   Window *main_window, *settings_window, *workout_window, *help_window, *confirm_window;
   Window *summary_window, *variation_window, *exit_window, *sensation_window;
-  Window *action_window, *inspector_window, *mega_window, *note_window;
+  Window *action_window, *inspector_window, *mega_window;
   Window *confirm_add_window, *ex_action_window;
 
   MenuLayer *menu_layer, *settings_menu_layer, *variation_menu_layer;
@@ -195,7 +195,7 @@ typedef struct {
 
   TextLayer *confirm_text_layer, *sum_title_layer, *sum_info_layer, *exit_text_layer;
   TextLayer *rest_title_layer, *rest_time_layer, *rest_skip_layer, *rest_prep_layer;
-  TextLayer *beat_layer, *missed_layer, *accuracy_layer, *density_layer, *note_text_layer;
+  TextLayer *beat_layer, *missed_layer, *accuracy_layer, *density_layer;
   TextLayer *confirm_add_text_layer;
 
   SimpleMenuSection action_menu_sections[1];
