@@ -264,7 +264,6 @@ static void push_variation_window(void);
 static void push_inspector_window(void);
 static void push_action_window(void);
 static void push_workout_window(void);
-static void push_note_window(void);
 static void push_mega_window(void);
 
 static void set_rest_overlay_state(bool is_resting, bool animated);
@@ -289,6 +288,7 @@ static void note_toast_text_update_proc(Layer *layer, GContext *ctx);
 static void note_toast_bg_update_proc(Layer *layer, GContext *ctx);
 static void note_toast_acc_update_proc(Layer *layer, GContext *ctx);
 static void note_toast_anim_stopped_handler(Animation *animation, bool finished, void *ctx);
+static void trigger_manual_note_toast(void);
 
 static void settings_window_load(Window *window);
 static void settings_window_unload(Window *window);
@@ -311,8 +311,6 @@ static void inspector_window_load(Window *window);
 static void inspector_window_unload(Window *window);
 static void action_window_load(Window *window);
 static void action_window_unload(Window *window);
-static void note_window_load(Window *window);
-static void note_window_unload(Window *window);
 static void mega_window_load(Window *window);
 static void mega_window_unload(Window *window);
 static void workout_window_load(Window *window);
@@ -940,7 +938,7 @@ static void execute_shortcut(int action_idx) {
     case 1:
       if (s_app.state.curr_ex_idx < s_app.state.total_exercises &&
           s_app.state.exercises[s_app.state.curr_ex_idx].comment[0] != '\0')
-        push_note_window();
+        trigger_manual_note_toast();
       else
         vibes_short_pulse();
       break;
@@ -1160,10 +1158,10 @@ static void settings_draw_row_callback(GContext *ctx, const Layer *cell_layer,
       case 8: {
         static const char *toast_modes[] = {
           "Auto 8s", "Auto 15s", "Auto 20s",
-          "Perm. Workout", "Perm. Rest", "Perm. Both"
+          "Perm. Workout", "Perm. Rest", "Perm. Both", "Manual"
         };
         int mode = s_app.settings.note_toast_mode;
-        if (mode < 0 || mode > 5) mode = 0;
+        if (mode < 0 || mode > 6) mode = 0;
         snprintf(title, sizeof(title), "Note Toast");
         snprintf(subtitle, sizeof(subtitle), "%s", toast_modes[mode]);
         break;
@@ -1244,7 +1242,7 @@ static void settings_select_callback(MenuLayer *ml, MenuIndex *cell_index, void 
         break;
       case 8:
         s_app.settings.note_toast_mode++;
-        if (s_app.settings.note_toast_mode > 5) s_app.settings.note_toast_mode = 0;
+        if (s_app.settings.note_toast_mode > 6) s_app.settings.note_toast_mode = 0;
         save_setting(SK_NOTE_TOAST, s_app.settings.note_toast_mode);
         update_note_toast_visibility();
         break;
@@ -1297,7 +1295,7 @@ static void settings_select_long_callback(MenuLayer *ml, MenuIndex *cell_index, 
       case 5: tooltip = "Sensation Q:\nAsks how you felt at the end of the workout before syncing data."; break;
       case 6: tooltip = "HR Sampling:\nHow often the watch saves your heart rate to calculate the workout average."; break;
       case 7: tooltip = "UI Layout:\nSwaps the position of Reps and Weight on the screen."; break;
-      case 8: tooltip = "Note Toast:\nHow long the exercise-note banner stays on screen.\nAuto 8s/15s/20s: dismisses after delay, hidden in rest.\nPerm. Workout/Rest/Both: always visible."; break;
+      case 8: tooltip = "Note Toast:\nAuto: Dismisses after delay.\nPerm: Always visible based on state.\nManual: Only shows via the View Note shortcut or menu."; break;
     }
   } else if (cell_index->section == 4) {
     tooltip = "Shortcuts:\nBind a specific action to a long-press of the Up, Down, or Select button during a workout.";
@@ -2345,31 +2343,15 @@ static void push_action_window(void) {
   window_stack_push(s_app.ui.action_window, true);
 }
 
-// ----------- Note Window -----------
-static void note_window_load(Window *window) {
-  Layer *w_layer = window_get_root_layer(window);
-  GRect bounds   = layer_get_bounds(w_layer);
-  s_app.ui.note_text_layer = text_layer_create(GRect(5, 30, bounds.size.w - 10, bounds.size.h - 30));
-  text_layer_set_font(s_app.ui.note_text_layer, fonts_get_system_font(FONT_KEY_GOTHIC_24_BOLD));
-  text_layer_set_text_alignment(s_app.ui.note_text_layer, GTextAlignmentCenter);
-  // FIX #6: guard before array access
-  if (s_app.state.curr_ex_idx < s_app.state.total_exercises)
-    text_layer_set_text(s_app.ui.note_text_layer, s_app.state.exercises[s_app.state.curr_ex_idx].comment);
-  text_layer_set_background_color(s_app.ui.note_text_layer, GColorClear);
-  text_layer_set_text_color(s_app.ui.note_text_layer,
-    PBL_IF_COLOR_ELSE(is_dark_theme() ? GColorWhite : GColorBlack, GColorBlack));
-  window_set_background_color(window, PBL_IF_COLOR_ELSE(is_dark_theme() ? GColorBlack : GColorWhite, GColorWhite));
-  layer_add_child(w_layer, text_layer_get_layer(s_app.ui.note_text_layer));
-}
-static void note_window_unload(Window *window) { text_layer_destroy(s_app.ui.note_text_layer); }
-
 // ----------- Mega (Action Sheet) Window -----------
 static void menu_var_callback(int index, void *ctx)       { push_variation_window(); }
 static void menu_note_callback(int index, void *ctx) {
   if (s_app.state.curr_ex_idx < s_app.state.total_exercises &&
-      s_app.state.exercises[s_app.state.curr_ex_idx].comment[0] != '\0')
-    push_note_window();
-  else vibes_short_pulse();
+      s_app.state.exercises[s_app.state.curr_ex_idx].comment[0] != '\0') {
+    trigger_manual_note_toast(); 
+  } else {
+    vibes_short_pulse();
+  }
 }
 static void menu_swap_callback(int index, void *ctx)      { window_stack_remove(s_app.ui.mega_window, false); swap_exercise(); }
 static void menu_skip_callback(int index, void *ctx)      { window_stack_remove(s_app.ui.mega_window, false); perform_true_skip(); }
@@ -2411,15 +2393,6 @@ static void menu_quick_add_callback(int index, void *ctx) {
   dictation_session_start(s_app.state.new_ex_dictation_session);
 }
 static void mega_window_unload(Window *window) { simple_menu_layer_destroy(s_app.ui.mega_menu_layer); }
-static void push_note_window(void) {
-  if (!s_app.ui.note_window) {
-    s_app.ui.note_window = window_create();
-    window_set_window_handlers(s_app.ui.note_window,
-      (WindowHandlers){ .load = note_window_load, .unload = note_window_unload });
-  }
-  window_set_background_color(s_app.ui.note_window, get_bg_color());
-  window_stack_push(s_app.ui.note_window, true);
-}
 static void push_mega_window(void) {
   if (!s_app.ui.mega_window) {
     s_app.ui.mega_window = window_create();
@@ -2583,13 +2556,19 @@ static void update_note_toast_visibility(void) {
   // Mode 3:      permanent during active sets, hidden during rest.
   // Mode 4:      permanent during rest, hidden during active sets.
   // Mode 5:      permanent always.
+  // Mode 6:      manual. replacing the note view window. note toast auto-dismisses after 8s.
   int mode = s_app.settings.note_toast_mode;
   if (mode < 0) mode = 0;
-  if (mode > 5) mode = 5;
+  if (mode > 6) mode = 6;
 
   if (s_app.ui.note_toast_dismiss_timer) {
     app_timer_cancel(s_app.ui.note_toast_dismiss_timer);
     s_app.ui.note_toast_dismiss_timer = NULL;
+  }
+  
+  if (mode == 6) {
+    hide_note_toast(false);
+    return;
   }
 
   if (mode <= 2) {
@@ -2598,11 +2577,12 @@ static void update_note_toast_visibility(void) {
       return;
     }
     show_note_toast();
-    int dismiss_ms = (mode == 1) ? NOTE_TOAST_DISMISS_MS_15
-                    : (mode == 2) ? NOTE_TOAST_DISMISS_MS_20
-                    : NOTE_TOAST_DISMISS_MS_8;
-    s_app.ui.note_toast_dismiss_timer =
-      app_timer_register(dismiss_ms, note_toast_dismiss_cb, NULL);
+    if (s_app.ui.note_toast_visible) {
+      int dismiss_ms = (mode == 1) ? NOTE_TOAST_DISMISS_MS_15
+                      : (mode == 2) ? NOTE_TOAST_DISMISS_MS_20
+                      : NOTE_TOAST_DISMISS_MS_8;
+      s_app.ui.note_toast_dismiss_timer = app_timer_register(dismiss_ms, note_toast_dismiss_cb, NULL);
+    }
   } else if (mode == 3) {
     if (s_app.state.is_resting) hide_note_toast(false);
     else                        show_note_toast();
@@ -2612,6 +2592,24 @@ static void update_note_toast_visibility(void) {
   } else {
     // mode == 5: always on (when the current exercise has a note)
     show_note_toast();
+  }
+}
+
+static void trigger_manual_note_toast(void) {
+  // 1. If the Mega Menu is open, safely remove it to reveal the workout window underneath
+  if (s_app.ui.mega_window && window_is_loaded(s_app.ui.mega_window)) {
+    window_stack_remove(s_app.ui.mega_window, true); 
+  }
+
+  // 2. Trigger the toast animation
+  show_note_toast();
+  
+  // 3. Set the manual 8-second override timer
+  if (s_app.ui.note_toast_visible) {
+    if (s_app.ui.note_toast_dismiss_timer) {
+      app_timer_cancel(s_app.ui.note_toast_dismiss_timer);
+    }
+    s_app.ui.note_toast_dismiss_timer = app_timer_register(NOTE_TOAST_DISMISS_MS_8, note_toast_dismiss_cb, NULL);
   }
 }
 
@@ -3725,7 +3723,6 @@ static void deinit(void) {
   if (s_app.ui.exit_window)      { window_destroy(s_app.ui.exit_window);      s_app.ui.exit_window      = NULL; }
   if (s_app.ui.sensation_window) { window_destroy(s_app.ui.sensation_window); s_app.ui.sensation_window = NULL; }
   if (s_app.ui.mega_window)      { window_destroy(s_app.ui.mega_window);      s_app.ui.mega_window      = NULL; }
-  if (s_app.ui.note_window)      { window_destroy(s_app.ui.note_window);      s_app.ui.note_window      = NULL; }
   if (s_app.ui.action_window)    { window_destroy(s_app.ui.action_window);    s_app.ui.action_window    = NULL; }
   if (s_app.ui.inspector_window) { window_destroy(s_app.ui.inspector_window); s_app.ui.inspector_window = NULL; }
   if (s_app.ui.ex_action_window) { window_destroy(s_app.ui.ex_action_window); s_app.ui.ex_action_window = NULL; }
