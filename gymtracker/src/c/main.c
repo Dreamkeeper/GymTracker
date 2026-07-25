@@ -629,11 +629,18 @@ static void init_temp_values(Exercise *ex) {
   } else if (s_app.settings.prefill_mode == 1) {
     // Mode 1: Safely peek at History (Flash Memory), fallback to Target if 0
     Exercise hist_ex;
-    if (persist_read_data(ROUTINE_EX_BASE + (s_app.state.current_slot * MAX_EXERCISES) + s_app.state.curr_ex_idx, &hist_ex, sizeof(Exercise)) > 0) {
-      int hist_reps   = hist_ex.actual_reps[ex->current_set - 1];
-      int hist_weight = hist_ex.actual_weight[ex->current_set - 1];
-      if (hist_reps > 0) base_reps = hist_reps;
-      if (hist_weight > 0) base_weight = hist_weight;
+    
+    // Loop through flash memory to find the matching exercise by name (safeguards against live swapping)
+    for (int i = 0; i < s_app.state.total_exercises; i++) {
+      if (persist_read_data(ROUTINE_EX_BASE + (s_app.state.current_slot * MAX_EXERCISES) + i, &hist_ex, sizeof(Exercise)) > 0) {
+        if (strcmp(hist_ex.name, ex->name) == 0) {
+          int hist_reps   = hist_ex.actual_reps[ex->current_set - 1];
+          int hist_weight = hist_ex.actual_weight[ex->current_set - 1];
+          if (hist_reps > 0) base_reps = hist_reps;
+          if (hist_weight > 0) base_weight = hist_weight;
+          break; // Match found, stop reading flash memory
+        }
+      }
     }
   }
 
