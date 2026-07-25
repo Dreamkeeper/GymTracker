@@ -45,6 +45,7 @@ typedef enum {
   SK_NOTE_TOAST    = 21,
   SK_HR_RATE       = 22,
   SK_SWAP_UI       = 23,
+  SK_PREFILL_MODE  = 24,
 } SettingsKey;
 
 // ========================================================================= //
@@ -105,6 +106,7 @@ typedef struct {
   int hr_sample_rate;
   int swap_reps_weight;
   int note_toast_mode;
+  int prefill_mode;
 } AppSettings;
 
 typedef struct {
@@ -224,7 +226,7 @@ static GymTrackerApp s_app = {
     .long_press_ms = 500, .drop_set_pct = 20, .last_routine_slot = 0, .dark_mode = 0,
     .shortcut_up = 1, .shortcut_down = 2, .shortcut_select = 4, .dynamic_hr_target = 0,
     .progression_mode = -1, .weight_increment = 2, .enable_ghost = 1, .enable_sensation = 1,
-    .hr_sample_rate = 1, .swap_reps_weight = 0, .note_toast_mode = 0
+    .hr_sample_rate = 1, .swap_reps_weight = 0, .note_toast_mode = 0, .prefill_mode = 0
   },
   .state = {
     .active = false, .has_resume = false, .is_paused = false, .is_resting = false,
@@ -432,6 +434,7 @@ static void load_settings(void) {
   if (persist_exists(SETTINGS_KEY_BASE + SK_HR_RATE))     s_app.settings.hr_sample_rate   = persist_read_int(SETTINGS_KEY_BASE + SK_HR_RATE);
   if (persist_exists(SETTINGS_KEY_BASE + SK_SWAP_UI))     s_app.settings.swap_reps_weight = persist_read_int(SETTINGS_KEY_BASE + SK_SWAP_UI);
   if (persist_exists(SETTINGS_KEY_BASE + SK_NOTE_TOAST))  s_app.settings.note_toast_mode  = persist_read_int(SETTINGS_KEY_BASE + SK_NOTE_TOAST);
+  if (persist_exists(SETTINGS_KEY_BASE + SK_PREFILL_MODE))  s_app.settings.prefill_mode   = persist_read_int(SETTINGS_KEY_BASE + SK_PREFILL_MODE);
 }
 
 static void save_setting(SettingsKey key, int value) {
@@ -614,21 +617,47 @@ static int get_completed_sets(void) {
 
 static void init_temp_values(Exercise *ex) {
   s_app.state.is_timed_active = false;
+  
+  int base_reps = ex->target_reps;
+  int base_weight = ex->target_weight;
+
+  // Evaluate the user's Pre-fill Setting
+  if (s_app.settings.prefill_mode == 2) {
+    // Mode 2: Always start at Zero
+    base_reps = 0;
+    base_weight = 0;
+  } else if (s_app.settings.prefill_mode == 1) {
+    // Mode 1: Safely peek at History (Flash Memory), fallback to Target if 0
+    Exercise hist_ex;
+    if (persist_read_data(ROUTINE_EX_BASE + (s_app.state.current_slot * MAX_EXERCISES) + s_app.state.curr_ex_idx, &hist_ex, sizeof(Exercise)) > 0) {
+      int hist_reps   = hist_ex.actual_reps[ex->current_set - 1];
+      int hist_weight = hist_ex.actual_weight[ex->current_set - 1];
+      if (hist_reps > 0) base_reps = hist_reps;
+      if (hist_weight > 0) base_weight = hist_weight;
+    }
+  }
+
+  // Modifiers and Final Assignment
   if (ex->modifier == 6) {
     s_app.state.temp_reps = 0;
   } else {
-    s_app.state.temp_reps = ex->target_reps;
+    s_app.state.temp_reps = base_reps;
+    
+    // Drop Set modifier overrides standard pre-fill
     if (ex->modifier == 1 && (ex->current_set % 2 == 0) && ex->target_weight == 0) {
       s_app.state.temp_reps = ex->actual_reps[ex->current_set - 2];
       s_app.state.temp_reps = (s_app.state.temp_reps * (100 - s_app.settings.drop_set_pct)) / 100;
     }
   }
 
-  int active_weight = ex->target_weight;
+  int active_weight = base_weight;
+  
+  // Drop Set modifier overrides standard pre-fill
   if (ex->modifier == 1 && (ex->current_set % 2 == 0) && ex->target_weight != 0) {
     active_weight = ex->actual_weight[ex->current_set - 2];
     active_weight = (active_weight * (100 - s_app.settings.drop_set_pct)) / 100;
   }
+  
   s_app.state.temp_weight = active_weight;
 }
 
@@ -1080,7 +1109,7 @@ static uint16_t settings_get_num_rows_callback(MenuLayer *ml, uint16_t section, 
   if (section == 0) return 5;
   if (section == 1) return 3;
   if (section == 2) return 1;
-  if (section == 3) return 9;
+  if (section == 3) return 10;
   if (section == 4) return 3;
   return 0;
 }
@@ -1166,6 +1195,14 @@ static void settings_draw_row_callback(GContext *ctx, const Layer *cell_layer,
         snprintf(subtitle, sizeof(subtitle), "%s", toast_modes[mode]);
         break;
       }
+      case 9: {
+        static const char *prefill_modes[] = {"Target", "History", "Zero"};
+        int mode = s_app.settings.prefill_mode;
+        if (mode < 0 || mode > 2) mode = 0;
+        snprintf(title, sizeof(title), "Pre-fill Sets");
+        snprintf(subtitle, sizeof(subtitle), "%s", prefill_modes[mode]);
+        break;
+      }
     }
   } else if (cell_index->section == 4) {
     static const char *actions[] = {"Variations","View Note","Swap (Later)","Skip Entirely","Finish Set","Skip Set","Voice Note", "Add Ex. (Voice)"};
@@ -1246,6 +1283,11 @@ static void settings_select_callback(MenuLayer *ml, MenuIndex *cell_index, void 
         save_setting(SK_NOTE_TOAST, s_app.settings.note_toast_mode);
         update_note_toast_visibility();
         break;
+      case 9:
+        s_app.settings.prefill_mode++;
+        if (s_app.settings.prefill_mode > 2) s_app.settings.prefill_mode = 0;
+        save_setting(SK_PREFILL_MODE, s_app.settings.prefill_mode);
+        break;
     }
   } else if (cell_index->section == 4) {
     switch (cell_index->row) {
@@ -1296,6 +1338,7 @@ static void settings_select_long_callback(MenuLayer *ml, MenuIndex *cell_index, 
       case 6: tooltip = "HR Sampling:\nHow often the watch saves your heart rate to calculate the workout average."; break;
       case 7: tooltip = "UI Layout:\nSwaps the position of Reps and Weight on the screen."; break;
       case 8: tooltip = "Note Toast:\nAuto: Dismisses after delay.\nPerm: Always visible based on state.\nManual: Only shows via the View Note shortcut or menu."; break;
+      case 9: tooltip = "Pre-fill Sets:\nTarget: Uses set goals.\nHistory: Uses actuals from last workout.\nZero: Starts at 0."; break;
     }
   } else if (cell_index->section == 4) {
     tooltip = "Shortcuts:\nBind a specific action to a long-press of the Up, Down, or Select button during a workout.";
@@ -1912,7 +1955,7 @@ static void summary_window_load(Window *window) {
 
   for (int i = 0; i < s_app.state.total_exercises; i++) {
     // OPT #5: only write exercises whose progression actually changed
-    if (s_app.settings.progression_mode != -1 && s_app.state.exercises[i].dirty)
+    // if (s_app.settings.progression_mode != -1 && s_app.state.exercises[i].dirty)
       persist_write_data(ROUTINE_EX_BASE + (s_app.state.current_slot * MAX_EXERCISES) + i,
                          &s_app.state.exercises[i], sizeof(Exercise));
 
@@ -3432,6 +3475,11 @@ static void start_workout_from_slot(int slot_idx) {
     persist_read_data(ROUTINE_EX_BASE + (slot_idx * MAX_EXERCISES) + j, &s_app.state.exercises[j], sizeof(Exercise));
     s_app.state.exercises[j].current_set = 1;
     s_app.state.total_workout_sets += s_app.state.exercises[j].target_sets;
+    
+    for(int s = 0; s < 10; s++) {
+      s_app.state.exercises[j].actual_reps[s] = 0;
+      s_app.state.exercises[j].actual_weight[s] = 0;
+    }
   }
 
   s_app.state.curr_ex_idx = 0;
