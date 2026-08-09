@@ -3650,13 +3650,41 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
 
     } else {
       parse_routine_string(inbox_copy);
+      
       int target_slot = s_app.storage.active_slots;
+      bool slot_exists = false;
+      
+      // Find out if we are updating an existing routine or creating a new one
       for (int i = 0; i < s_app.storage.active_slots; i++) {
         if (strcmp(s_app.storage.slot_names[i], s_app.state.routine_name) == 0) {
-          target_slot = i; break;
+          target_slot = i; 
+          slot_exists = true;
+          break;
         }
       }
       if (target_slot > MAX_SLOTS - 1) target_slot = MAX_SLOTS - 1;
+
+      // PRESERVE HISTORY: If updating an existing routine, merge the old actuals!
+      if (slot_exists) {
+        for (int i = 0; i < s_app.state.total_exercises; i++) {
+          // Look for this specific exercise name in the old saved slot
+          for (int old_idx = 0; old_idx < s_app.storage.slot_counts[target_slot]; old_idx++) {
+            Exercise old_ex;
+            if (persist_read_data(ROUTINE_EX_BASE + (target_slot * MAX_EXERCISES) + old_idx, &old_ex, sizeof(Exercise)) > 0) {
+              if (strcmp(s_app.state.exercises[i].name, old_ex.name) == 0) {
+                // Match found! Copy the historical actuals into the incoming updated routine
+                for (int s = 0; s < 10; s++) {
+                  s_app.state.exercises[i].actual_reps[s] = old_ex.actual_reps[s];
+                  s_app.state.exercises[i].actual_weight[s] = old_ex.actual_weight[s];
+                }
+                break; // Found the match, move on to the next incoming exercise
+              }
+            }
+          }
+        }
+      }
+
+      // Now save the routine (which contains the new targets but preserves the old history)
       save_routine_to_slot(target_slot);
     }
 
