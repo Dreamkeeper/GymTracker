@@ -253,6 +253,13 @@ static const char *s_variations[]       = {
   "(Cable)", "(Machine)", "(Single Arm)", "(Single Leg)"
 };
 
+static int s_timer_edit_row = 0;
+static int s_timer_edit_val = 0;
+static Window *s_timer_edit_window = NULL;
+static TextLayer *s_timer_title_layer;
+static TextLayer *s_timer_value_layer;
+static TextLayer *s_timer_hints_layer;
+
 // ========================================================================= //
 //                        4. FORWARD DECLARATIONS                            //
 // ========================================================================= //
@@ -334,6 +341,7 @@ static void action_quick_add_callback(int index, void *ctx);
 static void menu_quick_add_callback(int index, void *ctx);
 static void push_confirm_add_window(void);
 static void push_ex_action_window(void);
+static void push_timer_edit_window(void);
 
 // ========================================================================= //
 //                           5. CORE UTILITIES                               //
@@ -1321,18 +1329,24 @@ static void settings_select_long_callback(MenuLayer *ml, MenuIndex *cell_index, 
     menu_layer_set_highlight_colors(s_app.ui.settings_menu_layer, get_theme_color(), get_bg_color());
     return;
   }
+  
+  if (cell_index->section == 0 && cell_index->row < 4) {
+    s_timer_edit_row = cell_index->row;
+    if (s_timer_edit_row == 0) s_timer_edit_val = s_app.settings.set_rest_sec;
+    else if (s_timer_edit_row == 1) s_timer_edit_val = s_app.settings.ex_rest_sec;
+    else if (s_timer_edit_row == 2) s_timer_edit_val = s_app.settings.super_rest_sec;
+    else if (s_timer_edit_row == 3) s_timer_edit_val = s_app.settings.drop_rest_sec;
+    
+    push_timer_edit_window();
+    return; 
+  }
 
   // Tooltip Router
   const char* tooltip = "No description available.";
   
   if (cell_index->section == 0) {
-    switch (cell_index->row) {
-      case 0: tooltip = "Set Rest:\nTriggered between regular sets of the same exercise."; break;
-      case 1: tooltip = "Exercise Rest:\nTriggered when transitioning to a brand new exercise."; break;
-      case 2: tooltip = "Super Rest:\nTriggered between linked exercises in a Superset or Giant Set."; break;
-      case 3: tooltip = "Drop Rest:\nA shorter rest period triggered automatically during Drop Sets."; break;
-      case 4: tooltip = "Dynamic Rest:\nAutomatically ends your rest period early if your Heart Rate drops below this target BPM."; break;
-    }
+    // We only reach here for row 4 (Dynamic Rest) now!
+    if (cell_index->row == 4) tooltip = "Dynamic Rest:\nAutomatically ends your rest period early if your Heart Rate drops below this target BPM.";
   } else if (cell_index->section == 1) {
     tooltip = "Haptics:\nChoose the vibration pattern that plays when this specific timer finishes.";
   } else if (cell_index->section == 2) {
@@ -3606,6 +3620,83 @@ static void main_window_unload(Window *window) {
   text_layer_destroy(s_app.ui.main_header_text);
   layer_destroy(s_app.ui.main_header_bg);
   menu_layer_destroy(s_app.ui.menu_layer);
+}
+
+// ----------- Number Picker Window -----------
+static void update_timer_edit_ui(void) {
+  static char val_buf[16];
+  snprintf(val_buf, sizeof(val_buf), "%d:%02d", s_timer_edit_val / 60, s_timer_edit_val % 60);
+  text_layer_set_text(s_timer_value_layer, val_buf);
+}
+
+static void timer_edit_up_click(ClickRecognizerRef r, void *ctx) {
+  s_timer_edit_val += 5; // Increment by 5 seconds
+  if (s_timer_edit_val > 600) s_timer_edit_val = 600; // Cap at 10 minutes
+  update_timer_edit_ui();
+}
+
+static void timer_edit_down_click(ClickRecognizerRef r, void *ctx) {
+  if (s_timer_edit_val >= 5) s_timer_edit_val -= 5;
+  update_timer_edit_ui();
+}
+
+static void timer_edit_select_click(ClickRecognizerRef r, void *ctx) {
+  // Save to the correct setting based on the row they clicked
+  switch (s_timer_edit_row) {
+    case 0: s_app.settings.set_rest_sec   = s_timer_edit_val; save_setting(SK_SET_REST, s_timer_edit_val); break;
+    case 1: s_app.settings.ex_rest_sec    = s_timer_edit_val; save_setting(SK_EX_REST, s_timer_edit_val); break;
+    case 2: s_app.settings.super_rest_sec = s_timer_edit_val; save_setting(SK_SUPER_REST, s_timer_edit_val); break;
+    case 3: s_app.settings.drop_rest_sec  = s_timer_edit_val; save_setting(SK_DROP_REST, s_timer_edit_val); break;
+  }
+  vibes_short_pulse();
+  menu_layer_reload_data(s_app.ui.settings_menu_layer);
+  window_stack_pop(true);
+}
+
+static void timer_edit_click_provider(void *ctx) {
+  window_single_click_subscribe(BUTTON_ID_UP, timer_edit_up_click);
+  window_single_click_subscribe(BUTTON_ID_DOWN, timer_edit_down_click);
+  window_single_click_subscribe(BUTTON_ID_SELECT, timer_edit_select_click);
+  // Add repeating clicks so they can hold the button down to scroll fast!
+  window_single_repeating_click_subscribe(BUTTON_ID_UP, 100, timer_edit_up_click);
+  window_single_repeating_click_subscribe(BUTTON_ID_DOWN, 100, timer_edit_down_click);
+}
+
+static void timer_edit_window_load(Window *window) {
+  Layer *w_layer = window_get_root_layer(window);
+  GRect bounds = layer_get_bounds(w_layer);
+
+  static char title_buf[32];
+  if (s_timer_edit_row == 0) snprintf(title_buf, sizeof(title_buf), "Set Rest");
+  else if (s_timer_edit_row == 1) snprintf(title_buf, sizeof(title_buf), "Exercise Rest");
+  else if (s_timer_edit_row == 2) snprintf(title_buf, sizeof(title_buf), "Super Rest");
+  else snprintf(title_buf, sizeof(title_buf), "Drop Rest");
+
+  s_timer_title_layer = build_text_layer(GRect(0, 20, bounds.size.w, 30), FONT_KEY_GOTHIC_24_BOLD, get_text_color(), GTextAlignmentCenter, w_layer);
+  text_layer_set_text(s_timer_title_layer, title_buf);
+
+  s_timer_value_layer = build_text_layer(GRect(0, bounds.size.h / 2 - 25, bounds.size.w, 50), FONT_KEY_BITHAM_42_BOLD, get_theme_color(), GTextAlignmentCenter, w_layer);
+  
+  s_timer_hints_layer = build_text_layer(GRect(0, bounds.size.h - 40, bounds.size.w, 40), FONT_KEY_GOTHIC_14, get_text_color(), GTextAlignmentCenter, w_layer);
+  text_layer_set_text(s_timer_hints_layer, "[Up/Down] Adjust\n[Select] Save");
+
+  update_timer_edit_ui();
+}
+
+static void timer_edit_window_unload(Window *window) {
+  text_layer_destroy(s_timer_title_layer);
+  text_layer_destroy(s_timer_value_layer);
+  text_layer_destroy(s_timer_hints_layer);
+}
+
+static void push_timer_edit_window(void) {
+  if (!s_timer_edit_window) {
+    s_timer_edit_window = window_create();
+    window_set_click_config_provider(s_timer_edit_window, timer_edit_click_provider);
+    window_set_window_handlers(s_timer_edit_window, (WindowHandlers){ .load = timer_edit_window_load, .unload = timer_edit_window_unload });
+  }
+  window_set_background_color(s_timer_edit_window, get_bg_color());
+  window_stack_push(s_timer_edit_window, true);
 }
 
 // ========================================================================= //
