@@ -1425,26 +1425,33 @@ window.addEventListener('load', () => {
             return;
         }
 
-        // Local copy exists: merge. For each sync exercise, only update
-        // target_weight on the matching local exercise when the local
-        // exercise's identifying fields (name, sets, reps, modifier,
-        // comment) are identical to the sync's. This preserves renames,
-        // reorderings, deletions, and comment edits made on the phone,
-        // while still picking up the watch's auto-progression weights.
+        // Local copy exists: merge. Match each sync exercise against the
+        // local copy using stable identity fields only (name, sets,
+        // modifier, comment). Reps and weight are progression values the
+        // watch may auto-update, so they are excluded from the identity
+        // check and merged from the sync when they differ. This preserves
+        // renames, reorderings, deletions, and comment edits made on the
+        // phone, while still picking up the watch's auto-progression for
+        // both reps and weight.
         let merged = false;
         const mergedExercises = (localRoutine.exercises || []).map(migrateLegacyExercise);
         for (let i = 0; i < syncExercises.length && i < mergedExercises.length; i++) {
             const local = mergedExercises[i];
             const syncEx = syncExercises[i];
-            const sameIdentity =
+            const sameExercise =
                 String(local[0]) === String(syncEx[0]) &&
                 Number(local[1]) === Number(syncEx[1]) &&
-                Number(local[2]) === Number(syncEx[2]) &&
                 Number(local[4]) === Number(syncEx[4]) &&
                 String(local[5] || '') === String(syncEx[5] || '');
-            if (sameIdentity && Number(local[3]) !== Number(syncEx[3])) {
-                local[3] = Number(syncEx[3]);
-                merged = true;
+            if (sameExercise) {
+                if (Number(local[2]) !== Number(syncEx[2])) {
+                    local[2] = Number(syncEx[2]);
+                    merged = true;
+                }
+                if (Number(local[3]) !== Number(syncEx[3])) {
+                    local[3] = Number(syncEx[3]);
+                    merged = true;
+                }
             }
         }
 
