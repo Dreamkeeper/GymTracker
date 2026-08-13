@@ -210,12 +210,21 @@ Pebble.addEventListener('showConfiguration', function() {
 Pebble.addEventListener('webviewclosed', function(e) {
   if (!e.response || e.response === 'CANCELLED' || e.response === '[]') return;
 
+  // Log the raw response length. The config response rides the
+  // pebblejs://close# URL, which the phone app silently truncates past a
+  // platform limit (observed: 252/279 chars deliver, 672 is dropped). The
+  // length logged here reveals the exact limit on first contact, so the
+  // MAX_CONFIG_RESPONSE cap in index.html can be tuned precisely.
+  console.log('webviewclosed: raw response length = ' + (e.response ? e.response.length : 0));
+
   var configData;
   try {
     configData = JSON.parse(decodeURIComponent(e.response));
   } catch (err) {
-    // FIX: guard against malformed JSON instead of crashing the JS runtime
-    console.log('webviewclosed: failed to parse response: ' + err);
+    // FIX: guard against malformed JSON instead of crashing the JS runtime.
+    // A truncated response (over the platform URL limit) lands here: the
+    // settings save is silently lost. The length above is the diagnostic.
+    console.log('webviewclosed: failed to parse response (length=' + (e.response ? e.response.length : 0) + '): ' + err);
     return;
   }
 

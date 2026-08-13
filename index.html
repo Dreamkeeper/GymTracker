@@ -328,6 +328,16 @@ const MAX_ROUTINE_LEN = 1300;  // real worst-case: 15 exercises × ~79 chars + n
 const MAX_EXERCISES   = 15;    // mirrors #define MAX_EXERCISES in main.c
 const MAX_HISTORY     = 30;
 
+// Hard cap on the ENCODED config response (the pebblejs://close# payload).
+// The phone app silently drops responses above a platform limit, so a too-long
+// routine appeared to "save" while the watch never received it. Measurements
+// from a real device: 252 and 279 encoded chars delivered fine, 672 was
+// silently dropped — the true limit sits between them (suspected 512, to be
+// confirmed via the pkjs webviewclosed length log). The cap is conservative;
+// note encodeURIComponent inflates pipes/spaces/commas ~2.1x, so the routine
+// string itself must stay well under ~200 raw chars.
+const MAX_CONFIG_RESPONSE = 450;
+
 /** Modifier value → { label, badgeClass } */
 const MODIFIER_META = {
     0: { desc: 'Standard exercise execution with regular rest periods.', borderColor: '#ccc' },
@@ -366,6 +376,11 @@ let draggedIndex     = null;
 let workoutHistory   = [];
 let shouldClearHistory = false;
 let shouldClearGoogle  = false;
+// Raw routine strings last synced FROM the watch (name → sync string),
+// captured from the 'sync' URL param at page load. Used to detect whether
+// the editor's routine is unchanged, so a mode-only change can be sent
+// without re-transmitting the whole (potentially oversized) routine.
+let syncedRoutinesDict = {};
 
 // ============================================================
 // STORAGE HELPERS  (mirrors index.js for consistency)
@@ -1003,20 +1018,72 @@ function serialiseRoutine(name, exercises) {
 // BUILD CONFIG PAYLOAD  (shared by single send and batch)
 // ============================================================
 function buildConfigPayload(routineData) {
-    return {
-        routineData,
+    // Only include fields that are actually set. The response rides the
+    // pebblejs://close# URL, which the phone app silently truncates past a
+    // platform limit, so every unnecessary character shrinks how much
+    // routine data can be delivered. Google creds are persisted phone-side
+    // in webviewclosed (index.js) regardless, so empty/unset values are
+    // simply omitted here.
+    const payload = {
         progressionMode: document.getElementById('progressionMode').value,
-        weightIncrement: document.getElementById('weightIncrement').value,
-        googleUrl:       document.getElementById('googleUrlInput').value,
-        googlePwd:       document.getElementById('googlePwdInput').value,
-        clearHistory:    shouldClearHistory,
-        clearGoogle:     shouldClearGoogle
+        weightIncrement: document.getElementById('weightIncrement').value
     };
+    if (routineData) payload.routineData = routineData;
+    const googleUrl = document.getElementById('googleUrlInput').value;
+    const googlePwd  = document.getElementById('googlePwdInput').value;
+    if (googleUrl) payload.googleUrl = googleUrl;
+    if (googlePwd)  payload.googlePwd  = googlePwd;
+    if (shouldClearHistory) payload.clearHistory = true;
+    if (shouldClearGoogle)  payload.clearGoogle  = true;
+    return payload;
 }
 
 function sendToPebble(configData) {
     const returnTo = getQueryParam('return_to', 'pebblejs://close#');
-    window.location.href = returnTo + encodeURIComponent(JSON.stringify(configData));
+    const encoded  = encodeURIComponent(JSON.stringify(configData));
+    if (encoded.length > MAX_CONFIG_RESPONSE) {
+        alert(`⚠️ Settings payload is ${encoded.length} characters — over the ${MAX_CONFIG_RESPONSE}-char limit the Pebble app can transfer (longer responses are silently dropped and never reach the watch). Please shorten exercise names/comments or split the routine.`);
+        return;
+    }
+    window.location.href = returnTo + encoded;
+}
+
+// True when the editor's routine exactly matches the last copy the watch
+// synced to the phone. If so, only the progression settings need sending
+// (a tiny, always-deliverable payload) instead of the full routine.
+function routineMatchesSyncedCopy(name) {
+    const syncStr = syncedRoutinesDict[name];
+    if (!syncStr) return false;
+
+    const parts = syncStr.split('|');
+    let startIndex = 1;
+    if (PROGRESSION_TOKENS.has(parts[1])) startIndex = 3;
+
+    const syncExercises = [];
+    for (let i = startIndex; i < parts.length; i += 6) {
+        if (!parts[i] || i + 5 >= parts.length) break;
+        syncExercises.push([
+            parts[i],
+            parseInt(parts[i+1], 10),
+            parseInt(parts[i+2], 10),
+            parseInt(parts[i+3], 10),
+            parseInt(parts[i+4], 10),
+            parts[i+5] === '-' ? '' : parts[i+5]
+        ]);
+    }
+
+    if (syncExercises.length !== myRoutine.length) return false;
+    for (let i = 0; i < myRoutine.length; i++) {
+        const a = myRoutine[i];
+        const b = syncExercises[i];
+        if (String(a[0]) !== String(b[0])) return false;
+        if (Number(a[1]) !== Number(b[1])) return false;
+        if (Number(a[2]) !== Number(b[2])) return false;
+        if (Number(a[3]) !== Number(b[3])) return false;
+        if ((a.length > 4 ? Number(a[4]) : 0) !== Number(b[4])) return false;
+        if ((a.length > 5 ? String(a[5]) : '') !== String(b[5] || '')) return false;
+    }
+    return true;
 }
 
 // ============================================================
@@ -1033,8 +1100,11 @@ function saveAndSendSingle() {
         return;
     }
 
+    // If the routine is unchanged from the watch's last synced copy, send
+    // only the progression settings (tiny payload, always fits the transfer
+    // limit). Only re-transmit the full routine when it actually changed.
     let routineStr = '';
-    if (myRoutine.length > 0) {
+    if (myRoutine.length > 0 && !routineMatchesSyncedCopy(name)) {
         routineStr = serialiseRoutine(name, myRoutine);
         if (routineStr.length > MAX_ROUTINE_LEN) {
             alert('⚠️ Routine too long! Please abbreviate some exercise names and try again.');
@@ -1377,7 +1447,8 @@ window.addEventListener('load', () => {
     // target_weight values for exercises the user has not modified.
     try {
         const syncParam = getQueryParam('sync', '{}');
-        const syncedDict = JSON.parse(syncParam);
+        syncedRoutinesDict = JSON.parse(syncParam);
+        const syncedDict = syncedRoutinesDict;
         const activeName = document.getElementById('routineName').value;
         const syncStr = syncedDict[activeName];
         if (!syncStr) return;
