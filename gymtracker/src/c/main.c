@@ -164,10 +164,10 @@ typedef struct {
   Window *main_window, *settings_window, *workout_window, *help_window, *confirm_window;
   Window *summary_window, *variation_window, *exit_window, *sensation_window;
   Window *action_window, *inspector_window, *mega_window;
-  Window *confirm_add_window, *ex_action_window, *jump_window;
+  Window *confirm_add_window, *ex_action_window;
 
   MenuLayer *menu_layer, *settings_menu_layer, *variation_menu_layer;
-  MenuLayer *sensation_menu_layer, *inspector_menu_layer, *jump_menu_layer;
+  MenuLayer *sensation_menu_layer, *inspector_menu_layer;
   SimpleMenuLayer *action_menu_layer, *mega_menu_layer, *ex_action_menu_layer;
 
   Layer *main_header_bg, *settings_header_bg, *progress_layer, *workout_bg_layer;
@@ -203,7 +203,7 @@ typedef struct {
   SimpleMenuSection action_menu_sections[1];
   SimpleMenuItem action_menu_items[4];
   SimpleMenuSection mega_menu_sections[1];
-  SimpleMenuItem mega_menu_items[9];
+  SimpleMenuItem mega_menu_items[8];
   SimpleMenuSection ex_action_menu_sections[1];
   SimpleMenuItem ex_action_menu_items[3];
 } AppUI;
@@ -342,8 +342,6 @@ static void menu_quick_add_callback(int index, void *ctx);
 static void push_confirm_add_window(void);
 static void push_ex_action_window(void);
 static void push_timer_edit_window(void);
-static void push_jump_window(void);
-static bool is_safe_to_jump(void);
 
 // ========================================================================= //
 //                           5. CORE UTILITIES                               //
@@ -1000,10 +998,6 @@ static void execute_shortcut(int action_idx) {
       }
       dictation_session_start(s_app.state.new_ex_dictation_session);
       break;
-    case 8: 
-      if (is_safe_to_jump()) push_jump_window(); 
-      else vibes_double_pulse(); 
-      break;
   }
 }
 
@@ -1226,7 +1220,7 @@ static void settings_draw_row_callback(GContext *ctx, const Layer *cell_layer,
       }
     }
   } else if (cell_index->section == 4) {
-    static const char *actions[] = {"Variations","View Note","Swap (Later)","Skip Entirely","Finish Set","Skip Set","Voice Note", "Add Ex. (Voice)", "Jump to Ex."};
+    static const char *actions[] = {"Variations","View Note","Swap (Later)","Skip Entirely","Finish Set","Skip Set","Voice Note", "Add Ex. (Voice)"};
     switch (cell_index->row) {
       case 0: snprintf(title, sizeof(title), "Up Long Press");     snprintf(subtitle, sizeof(subtitle), "%s", actions[s_app.settings.shortcut_up]);     break;
       case 1: snprintf(title, sizeof(title), "Down Long Press");   snprintf(subtitle, sizeof(subtitle), "%s", actions[s_app.settings.shortcut_down]);   break;
@@ -1312,9 +1306,9 @@ static void settings_select_callback(MenuLayer *ml, MenuIndex *cell_index, void 
     }
   } else if (cell_index->section == 4) {
     switch (cell_index->row) {
-      case 0: s_app.settings.shortcut_up++;     if (s_app.settings.shortcut_up     > 8) s_app.settings.shortcut_up     = 0; save_setting(SK_SHORTCUT_UP,   s_app.settings.shortcut_up);     break;
-      case 1: s_app.settings.shortcut_down++;   if (s_app.settings.shortcut_down   > 8) s_app.settings.shortcut_down   = 0; save_setting(SK_SHORTCUT_DOWN, s_app.settings.shortcut_down);   break;
-      case 2: s_app.settings.shortcut_select++; if (s_app.settings.shortcut_select > 8) s_app.settings.shortcut_select = 0; save_setting(SK_SHORTCUT_SEL,  s_app.settings.shortcut_select); break;
+      case 0: s_app.settings.shortcut_up++;     if (s_app.settings.shortcut_up     > 7) s_app.settings.shortcut_up     = 0; save_setting(SK_SHORTCUT_UP,   s_app.settings.shortcut_up);     break;
+      case 1: s_app.settings.shortcut_down++;   if (s_app.settings.shortcut_down   > 7) s_app.settings.shortcut_down   = 0; save_setting(SK_SHORTCUT_DOWN, s_app.settings.shortcut_down);   break;
+      case 2: s_app.settings.shortcut_select++; if (s_app.settings.shortcut_select > 7) s_app.settings.shortcut_select = 0; save_setting(SK_SHORTCUT_SEL,  s_app.settings.shortcut_select); break;
     }
   }
   menu_layer_reload_data(s_app.ui.settings_menu_layer);
@@ -2423,10 +2417,6 @@ static void menu_note_callback(int index, void *ctx) {
     vibes_short_pulse();
   }
 }
-static void menu_jump_callback(int index, void *ctx) { 
-  if (is_safe_to_jump()) push_jump_window(); 
-  else vibes_double_pulse(); 
-}
 static void menu_swap_callback(int index, void *ctx)      { window_stack_remove(s_app.ui.mega_window, false); swap_exercise(); }
 static void menu_skip_callback(int index, void *ctx)      { window_stack_remove(s_app.ui.mega_window, false); perform_true_skip(); }
 static void menu_finish_callback(int index, void *ctx)    { window_stack_remove(s_app.ui.mega_window, false); perform_finish_set(); }
@@ -2447,7 +2437,6 @@ static void mega_window_load(Window *window) {
   s_app.ui.mega_menu_items[n++] = (SimpleMenuItem){ .title = "Skip Set (Log 0)",        .subtitle = "Progress to next set",           .callback = menu_skip_set_callback };
   s_app.ui.mega_menu_items[n++] = (SimpleMenuItem){ .title = "Skip Exercise (Log 0)",   .subtitle = "Progress to next exercise",      .callback = menu_skip_callback };
   s_app.ui.mega_menu_items[n++] = (SimpleMenuItem){ .title = "Add Ex. (Voice)", .subtitle = "Append to routine", .callback = menu_quick_add_callback };
-  s_app.ui.mega_menu_items[n++] = (SimpleMenuItem){ .title = "Jump to Exercise", .subtitle = "Skip around the routine", .callback = menu_jump_callback };
 
   s_app.ui.mega_menu_sections[0] = (SimpleMenuSection){ .num_items = n, .items = s_app.ui.mega_menu_items };
 
@@ -3708,104 +3697,6 @@ static void push_timer_edit_window(void) {
   }
   window_set_background_color(s_timer_edit_window, get_bg_color());
   window_stack_push(s_timer_edit_window, true);
-}
-
-//-----------Jump Window----------
-// Globals for mapping the Jump list
-static int s_jump_map[MAX_EXERCISES];
-static int s_jump_count = 0;
-
-static bool is_safe_to_jump(void) {
-  if (s_app.state.curr_ex_idx >= s_app.state.total_exercises) return false;
-  int curr_idx = s_app.state.curr_ex_idx;
-  // Block jumping if the user is in ANY part of a Superset or Giant Set
-  bool curr_is_linked = (
-      s_app.state.exercises[curr_idx].modifier == 2 ||
-      s_app.state.exercises[curr_idx].modifier == 7 ||
-      (curr_idx > 0 && s_app.state.exercises[curr_idx - 1].modifier == 2) ||
-      (curr_idx > 0 && s_app.state.exercises[curr_idx - 1].modifier == 7) ||
-      (curr_idx > 1 && s_app.state.exercises[curr_idx - 2].modifier == 7)
-  );
-  return !curr_is_linked;
-}
-
-static uint16_t jump_get_num_rows_callback(MenuLayer *ml, uint16_t section, void *data) {
-  return s_jump_count;
-}
-
-static void jump_draw_row_callback(GContext *ctx, const Layer *cell_layer, MenuIndex *cell_index, void *data) {
-  int ex_idx = s_jump_map[cell_index->row];
-  Exercise *ex = &s_app.state.exercises[ex_idx];
-  
-  char subtitle[32];
-  // I recommend showing all exercises (even completed ones) so users can jump back to fix mistakes!
-  if (ex->current_set == ex->target_sets && ex->actual_reps[ex->current_set - 1] > 0) {
-    snprintf(subtitle, sizeof(subtitle), "Completed");
-  } else {
-    snprintf(subtitle, sizeof(subtitle), "Set %d of %d", ex->current_set, ex->target_sets);
-  }
-  
-  menu_cell_basic_draw(ctx, cell_layer, ex->name, subtitle, NULL);
-}
-
-static void jump_select_callback(MenuLayer *ml, MenuIndex *cell_index, void *data) {
-  int target_idx = s_jump_map[cell_index->row];
-  s_app.state.curr_ex_idx = target_idx;
-  
-  // Re-initialize the screen for the new exercise
-  init_temp_values(&s_app.state.exercises[s_app.state.curr_ex_idx]);
-  s_app.state.cached_completed_sets = get_completed_sets();
-  s_app.state.is_resting = false;
-  layer_set_hidden(s_app.ui.rest_overlay_layer, true);
-  s_app.state.edit_mode = (s_app.state.exercises[s_app.state.curr_ex_idx].target_weight == 0) ? 0 : s_app.settings.swap_reps_weight;
-  
-  update_workout_ui(true);
-  
-  // Clean up UI Stack
-  window_stack_remove(s_app.ui.jump_window, false);
-  if (s_app.ui.mega_window && window_is_loaded(s_app.ui.mega_window)) {
-    window_stack_remove(s_app.ui.mega_window, false);
-  }
-}
-
-static void jump_window_load(Window *window) {
-  Layer *w_layer = window_get_root_layer(window);
-  GRect bounds = layer_get_bounds(w_layer);
-
-  s_app.ui.jump_menu_layer = menu_layer_create(bounds);
-  menu_layer_set_callbacks(s_app.ui.jump_menu_layer, NULL, (MenuLayerCallbacks){
-    .get_num_rows = jump_get_num_rows_callback,
-    .draw_row     = jump_draw_row_callback,
-    .select_click = jump_select_callback,
-  });
-  menu_layer_set_normal_colors(s_app.ui.jump_menu_layer, get_bg_color(), get_text_color());
-  menu_layer_set_highlight_colors(s_app.ui.jump_menu_layer, get_theme_color(), get_bg_color());
-  menu_layer_set_click_config_onto_window(s_app.ui.jump_menu_layer, window);
-  layer_add_child(w_layer, menu_layer_get_layer(s_app.ui.jump_menu_layer));
-}
-
-static void jump_window_unload(Window *window) {
-  menu_layer_destroy(s_app.ui.jump_menu_layer);
-}
-
-static void push_jump_window(void) {
-  // Build the list of valid exercises to jump to
-  s_jump_count = 0;
-  for (int i = 0; i < s_app.state.total_exercises; i++) {
-    // Hide the followers of linked sets (only show the Anchor)
-    if (i > 0 && s_app.state.exercises[i-1].modifier == 2) continue;
-    if (i > 0 && s_app.state.exercises[i-1].modifier == 7) continue;
-    if (i > 1 && s_app.state.exercises[i-2].modifier == 7) continue;
-    
-    s_jump_map[s_jump_count++] = i;
-  }
-
-  if (!s_app.ui.jump_window) {
-    s_app.ui.jump_window = window_create();
-    window_set_window_handlers(s_app.ui.jump_window, (WindowHandlers){ .load = jump_window_load, .unload = jump_window_unload });
-  }
-  window_set_background_color(s_app.ui.jump_window, get_bg_color());
-  window_stack_push(s_app.ui.jump_window, true);
 }
 
 // ========================================================================= //
