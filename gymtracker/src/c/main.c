@@ -203,7 +203,7 @@ typedef struct {
   SimpleMenuSection action_menu_sections[1];
   SimpleMenuItem action_menu_items[4];
   SimpleMenuSection mega_menu_sections[1];
-  SimpleMenuItem mega_menu_items[8];
+  SimpleMenuItem mega_menu_items[9];
   SimpleMenuSection ex_action_menu_sections[1];
   SimpleMenuItem ex_action_menu_items[3];
 } AppUI;
@@ -968,8 +968,8 @@ static void perform_skip_set(void) {
   if (s_app.state.is_resting) skip_rest();
 }
 
-// "+ Add Set" (Variations menu): append one more set to the current exercise
-// mid-workout. Linked exercises must keep matching target_sets, so a superset
+// "Add Set" (double-click action sheet): append one more set to the current
+// exercise mid-workout. Linked exercises must keep matching target_sets, so a superset
 // grows as a pair and a giant set as a trio. Drop sets alternate normal/drop
 // sets, so they grow by a pair to keep the parity intact.
 static void add_extra_set(void) {
@@ -2084,23 +2084,13 @@ static void push_summary_window(void) {
 }
 
 // ----------- Variation Window -----------
-// Row NUM_VARIATIONS is the extra "+ Add Set" action appended below the name variations.
-static uint16_t variation_get_num_rows_callback(MenuLayer *ml, uint16_t section, void *data) { return NUM_VARIATIONS + 1; }
+static uint16_t variation_get_num_rows_callback(MenuLayer *ml, uint16_t section, void *data) { return NUM_VARIATIONS; }
 static void variation_draw_row_callback(GContext *ctx, const Layer *cell_layer, MenuIndex *cell_index, void *data) {
-  if (cell_index->row == NUM_VARIATIONS) {
-    menu_cell_basic_draw(ctx, cell_layer, "+ Add Set", "One more set of this exercise", NULL);
-    return;
-  }
   menu_cell_basic_draw(ctx, cell_layer, s_variations[cell_index->row], NULL, NULL);
 }
 static void variation_select_callback(MenuLayer *ml, MenuIndex *cell_index, void *data) {
   // FIX #6: guard before array access
   if (s_app.state.curr_ex_idx >= s_app.state.total_exercises) { window_stack_pop(true); return; }
-  if (cell_index->row == NUM_VARIATIONS) {
-    add_extra_set();
-    window_stack_pop(true);
-    return;
-  }
   Exercise *ex = &s_app.state.exercises[s_app.state.curr_ex_idx];
 
   char base_name[32];
@@ -2481,6 +2471,7 @@ static void menu_note_callback(int index, void *ctx) {
     vibes_short_pulse();
   }
 }
+static void menu_add_set_callback(int index, void *ctx)   { window_stack_remove(s_app.ui.mega_window, false); add_extra_set(); }
 static void menu_swap_callback(int index, void *ctx)      { window_stack_remove(s_app.ui.mega_window, false); swap_exercise(); }
 static void menu_skip_callback(int index, void *ctx)      { window_stack_remove(s_app.ui.mega_window, false); perform_true_skip(); }
 static void menu_finish_callback(int index, void *ctx)    { window_stack_remove(s_app.ui.mega_window, false); perform_finish_set(); }
@@ -2489,6 +2480,7 @@ static void menu_voice_callback(int index, void *ctx)     { window_stack_remove(
 static void mega_window_load(Window *window) {
   int n = 0;
   s_app.ui.mega_menu_items[n++] = (SimpleMenuItem){ .title = "Finish Set",             .subtitle = "Log & progress workout",    .callback = menu_finish_callback };
+  s_app.ui.mega_menu_items[n++] = (SimpleMenuItem){ .title = "Add Set",                .subtitle = "One more set of this exercise", .callback = menu_add_set_callback };
   s_app.ui.mega_menu_items[n++] = (SimpleMenuItem){ .title = "View Note",
     .subtitle = (s_app.state.curr_ex_idx < s_app.state.total_exercises &&
                  s_app.state.exercises[s_app.state.curr_ex_idx].comment[0] != '\0')
