@@ -13,7 +13,7 @@ You can configure your routines using the companion website here: [https://olive
 * **Advanced Modifiers:** Support for **Drop Sets** (automatically reduces target weight and doubles sets) and **Supersets** (links exercises together and bounces between them with custom transition timers).
 * **Auto-Progression:** Automatically increases targets when workout goals are met. You can set it to auto-increase weight or reps for your next workout if you successfully hit your targets. 
 * **Smart Rest Coach:** Automatic rest timers with custom haptic feedback for regular sets, exercises, and superset transitions.
-* **On-Watch Variations:** Double-click to append tags like `(Seated)`, `(Dumbbell)`, or `(Cable)` to exercises on the fly without touching your phone.
+* **On-Watch Variations:** Double-click to append tags like `(Seated)`, `(Dumbbell)`, or `(Cable)` to exercises on the fly without touching your phone. The same menu offers **+ Add Set** to bolt an extra set onto the current exercise mid-workout (supersets and giant sets grow together; drop sets grow by a pair).
 * **Routine Builder:** Create up to 7 custom routines via the web interface.
 * **Data Privacy:** Workouts are saved locally to your phone for CSV export, with an optional Google Sheets auto-sync for power users.
 

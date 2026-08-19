@@ -3,10 +3,13 @@
 // ============================================================
 // CONFIGURATION
 // ============================================================
+// NOTE (per AGENTS.md): these URLs point at THIS fork's GitHub Pages so the
+// settings-page fixes in this branch are actually served to the phone.
+// Revert to https://oliverano95.github.io/GymTracker/ before any upstream PR.
 var CONFIG = {
   isDevMode: false,
-  configUrlDev:  'https://oliverano95.github.io/GymTracker/index_dev.html',
-  configUrlProd: 'https://oliverano95.github.io/GymTracker/',
+  configUrlDev:  'https://dreamkeeper.github.io/GymTracker/index_dev.html',
+  configUrlProd: 'https://dreamkeeper.github.io/GymTracker/',
   maxHistory: 15
 };
 
@@ -323,6 +326,8 @@ Pebble.addEventListener('appmessage', function(e) {
 
     var setsMatch   = spokenText.match(/(\d+)\s*sets?/);
     if (setsMatch) sets = parseInt(setsMatch[1], 10);
+    if (sets > 10) sets = 10;  // the watch stores at most 10 sets per exercise
+    if (sets < 1)  sets = 1;
 
     var repsMatch   = spokenText.match(/(\d+)\s*reps?/);
     if (!repsMatch) repsMatch = spokenText.match(/sets? of (\d+)/);
