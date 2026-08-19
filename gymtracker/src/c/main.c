@@ -203,7 +203,7 @@ typedef struct {
   SimpleMenuSection action_menu_sections[1];
   SimpleMenuItem action_menu_items[4];
   SimpleMenuSection mega_menu_sections[1];
-  SimpleMenuItem mega_menu_items[8];
+  SimpleMenuItem mega_menu_items[9];
   SimpleMenuSection ex_action_menu_sections[1];
   SimpleMenuItem ex_action_menu_items[3];
 } AppUI;
@@ -478,8 +478,11 @@ static void parse_routine_string(const char *data) {
             if (ex->modifier == 6) { ex->target_weight = 0; }
             if (ex->modifier == 1) {
               ex->target_sets *= 2;
-              if (ex->target_sets > 10) ex->target_sets = 10;
             }
+            // actual_reps/actual_weight hold at most 10 sets — clamp every
+            // modifier, not just drop sets, or set 11+ corrupts memory.
+            if (ex->target_sets > 10) ex->target_sets = 10;
+            if (ex->target_sets < 1)  ex->target_sets = 1;
             ex->current_set = 1;
           } else if (field == 5) {
             if (strcmp(temp, "-") == 0) {
@@ -515,6 +518,31 @@ static void format_relative_time(char *buf, size_t size, int timestamp) {
   else                      snprintf(buf, size, "%dmo ago", diff / 2592000);
 }
 
+// Move an optional per-slot persisted int (last-completed timestamp,
+// ghost-pacer duration) from one slot to another, deleting the source.
+static void move_slot_int(int key_base, int from_slot, int to_slot) {
+  if (persist_exists(key_base + from_slot)) {
+    persist_write_int(key_base + to_slot, persist_read_int(key_base + from_slot));
+    persist_delete(key_base + from_slot);
+  }
+}
+
+// Swap an optional per-slot persisted int between two slots. b_may_exist
+// gates whether the target slot's value is treated as valid (false when the
+// target slot holds no routine).
+static void swap_slot_int(int key_base, int slot_a, int slot_b, bool b_may_exist) {
+  bool has_a = persist_exists(key_base + slot_a);
+  bool has_b = b_may_exist && persist_exists(key_base + slot_b);
+  int  val_a = has_a ? persist_read_int(key_base + slot_a) : 0;
+  int  val_b = has_b ? persist_read_int(key_base + slot_b) : 0;
+
+  if (has_a) persist_write_int(key_base + slot_b, val_a);
+  else       persist_delete(key_base + slot_b);
+
+  if (has_b) persist_write_int(key_base + slot_a, val_b);
+  else       persist_delete(key_base + slot_a);
+}
+
 static void refresh_directory(void) {
   s_app.storage.active_slots = 0;
   RoutineHeader header;
@@ -532,11 +560,8 @@ static void refresh_directory(void) {
           persist_delete(ROUTINE_EX_BASE + (i * MAX_EXERCISES) + j);
         }
         persist_delete(STORAGE_KEY_BASE + i);
-        if (persist_exists(LAST_COMPLETED_KEY_BASE + i)) {
-          persist_write_int(LAST_COMPLETED_KEY_BASE + s_app.storage.active_slots,
-                            persist_read_int(LAST_COMPLETED_KEY_BASE + i));
-          persist_delete(LAST_COMPLETED_KEY_BASE + i);
-        }
+        move_slot_int(LAST_COMPLETED_KEY_BASE, i, s_app.storage.active_slots);
+        move_slot_int(GHOST_KEY_BASE,          i, s_app.storage.active_slots);
       }
 
       snprintf(s_app.storage.slot_names[s_app.storage.active_slots],
@@ -941,6 +966,50 @@ static void perform_skip_set(void) {
   s_app.state.temp_weight = 0;
   perform_finish_set();
   if (s_app.state.is_resting) skip_rest();
+}
+
+// "Add Set" (double-click action sheet): append one more set to the current
+// exercise mid-workout. Linked exercises must keep matching target_sets, so a superset
+// grows as a pair and a giant set as a trio. Drop sets alternate normal/drop
+// sets, so they grow by a pair to keep the parity intact.
+static void add_extra_set(void) {
+  if (s_app.state.curr_ex_idx >= s_app.state.total_exercises) return;
+
+  int curr  = s_app.state.curr_ex_idx;
+  int first = curr, last = curr;
+  Exercise *ex = &s_app.state.exercises[curr];
+
+  if (ex->modifier == 7 && curr + 2 < s_app.state.total_exercises) {
+    first = curr;     last = curr + 2;
+  } else if (curr > 0 && s_app.state.exercises[curr - 1].modifier == 7 &&
+             curr + 1 < s_app.state.total_exercises) {
+    first = curr - 1; last = curr + 1;
+  } else if (curr >= 2 && s_app.state.exercises[curr - 2].modifier == 7) {
+    first = curr - 2; last = curr;
+  } else if (ex->modifier == 2 && curr + 1 < s_app.state.total_exercises) {
+    first = curr;     last = curr + 1;
+  } else if (curr > 0 && s_app.state.exercises[curr - 1].modifier == 2) {
+    first = curr - 1; last = curr;
+  }
+
+  int inc = (ex->modifier == 1) ? 2 : 1;
+
+  for (int i = first; i <= last; i++) {
+    if (s_app.state.exercises[i].target_sets + inc > 10) {
+      vibes_double_pulse();  // actual_reps/actual_weight hold at most 10 sets
+      return;
+    }
+  }
+
+  for (int i = first; i <= last; i++) {
+    s_app.state.exercises[i].target_sets += inc;
+    s_app.state.total_workout_sets += inc;
+  }
+
+  s_app.state.cached_completed_sets = get_completed_sets();
+  if (s_app.ui.progress_layer) layer_mark_dirty(s_app.ui.progress_layer);
+  update_workout_ui(false);
+  vibes_short_pulse();
 }
 
 static void dictation_session_callback(DictationSession *session, DictationSessionStatus status,
@@ -1478,6 +1547,7 @@ static void edit_select_click(ClickRecognizerRef recognizer, void *context) {
     for (int j = 0; j < MAX_EXERCISES; j++)
       persist_delete(ROUTINE_EX_BASE + (s_app.storage.slot_to_edit * MAX_EXERCISES) + j);
     persist_delete(LAST_COMPLETED_KEY_BASE + s_app.storage.slot_to_edit);
+    persist_delete(GHOST_KEY_BASE + s_app.storage.slot_to_edit);
   } else {
     RoutineHeader edit_header, target_header;
     bool target_exists = persist_exists(STORAGE_KEY_BASE + s_app.storage.target_swap_slot);
@@ -1505,26 +1575,9 @@ static void edit_select_click(ClickRecognizerRef recognizer, void *context) {
       else          persist_delete(    ROUTINE_EX_BASE + (s_app.storage.slot_to_edit   * MAX_EXERCISES) + j);
     }
 
-    // Swap last_completed timestamps
-    bool has_edit_ts   = persist_exists(LAST_COMPLETED_KEY_BASE + s_app.storage.slot_to_edit);
-    bool has_target_ts = target_exists && persist_exists(LAST_COMPLETED_KEY_BASE + s_app.storage.target_swap_slot);
-
-    int edit_ts   = has_edit_ts   ? persist_read_int(LAST_COMPLETED_KEY_BASE + s_app.storage.slot_to_edit)   : 0;
-    int target_ts = has_target_ts ? persist_read_int(LAST_COMPLETED_KEY_BASE + s_app.storage.target_swap_slot) : 0;
-
-    if (has_edit_ts)
-      persist_write_int(LAST_COMPLETED_KEY_BASE + s_app.storage.target_swap_slot, edit_ts);
-    else
-      persist_delete(LAST_COMPLETED_KEY_BASE + s_app.storage.target_swap_slot);
-
-    if (target_exists) {
-      if (has_target_ts)
-        persist_write_int(LAST_COMPLETED_KEY_BASE + s_app.storage.slot_to_edit, target_ts);
-      else
-        persist_delete(LAST_COMPLETED_KEY_BASE + s_app.storage.slot_to_edit);
-    } else {
-      persist_delete(LAST_COMPLETED_KEY_BASE + s_app.storage.slot_to_edit);
-    }
+    // Swap last_completed timestamps and ghost-pacer durations along with the routine
+    swap_slot_int(LAST_COMPLETED_KEY_BASE, s_app.storage.slot_to_edit, s_app.storage.target_swap_slot, target_exists);
+    swap_slot_int(GHOST_KEY_BASE,          s_app.storage.slot_to_edit, s_app.storage.target_swap_slot, target_exists);
   }
   refresh_directory();
   menu_layer_reload_data(s_app.ui.menu_layer);
@@ -2197,6 +2250,7 @@ static void ex_action_delete_callback(int index, void *ctx) {
     persist_delete(STORAGE_KEY_BASE + slot);
     persist_delete(ROUTINE_EX_BASE + (slot * MAX_EXERCISES) + 0);
     persist_delete(LAST_COMPLETED_KEY_BASE + slot);
+    persist_delete(GHOST_KEY_BASE + slot);
     
     if (s_app.state.active && s_app.state.current_slot == slot) {
       s_app.state.active = false;
@@ -2417,6 +2471,7 @@ static void menu_note_callback(int index, void *ctx) {
     vibes_short_pulse();
   }
 }
+static void menu_add_set_callback(int index, void *ctx)   { window_stack_remove(s_app.ui.mega_window, false); add_extra_set(); }
 static void menu_swap_callback(int index, void *ctx)      { window_stack_remove(s_app.ui.mega_window, false); swap_exercise(); }
 static void menu_skip_callback(int index, void *ctx)      { window_stack_remove(s_app.ui.mega_window, false); perform_true_skip(); }
 static void menu_finish_callback(int index, void *ctx)    { window_stack_remove(s_app.ui.mega_window, false); perform_finish_set(); }
@@ -2425,6 +2480,7 @@ static void menu_voice_callback(int index, void *ctx)     { window_stack_remove(
 static void mega_window_load(Window *window) {
   int n = 0;
   s_app.ui.mega_menu_items[n++] = (SimpleMenuItem){ .title = "Finish Set",             .subtitle = "Log & progress workout",    .callback = menu_finish_callback };
+  s_app.ui.mega_menu_items[n++] = (SimpleMenuItem){ .title = "Add Set",                .subtitle = "One more set of this exercise", .callback = menu_add_set_callback };
   s_app.ui.mega_menu_items[n++] = (SimpleMenuItem){ .title = "View Note",
     .subtitle = (s_app.state.curr_ex_idx < s_app.state.total_exercises &&
                  s_app.state.exercises[s_app.state.curr_ex_idx].comment[0] != '\0')
@@ -3611,7 +3667,9 @@ static void main_window_load(Window *window) {
   if (s_app.storage.active_slots > 0) {
     int next_slot = s_app.settings.last_routine_slot + 1;
     if (next_slot >= s_app.storage.active_slots) next_slot = 0;
-    menu_layer_set_selected_index(s_app.ui.menu_layer, MenuIndex(0, next_slot), MenuRowAlignCenter, false);
+    // Routine rows shift down by one when the Resume row is shown
+    int row = next_slot + (s_app.state.has_resume ? 1 : 0);
+    menu_layer_set_selected_index(s_app.ui.menu_layer, MenuIndex(0, row), MenuRowAlignCenter, false);
   }
   layer_add_child(window_layer, menu_layer_get_layer(s_app.ui.menu_layer));
 }
@@ -3829,6 +3887,8 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
     }
 
     // Initialize runtime variables
+    if (ex.target_sets > 10) ex.target_sets = 10;  // actual_* arrays hold 10 sets
+    if (ex.target_sets < 1)  ex.target_sets = 1;
     ex.current_set = 1;
     for(int j=0; j<10; j++) { ex.actual_reps[j] = 0; ex.actual_weight[j] = 0; }
 

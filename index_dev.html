@@ -172,7 +172,7 @@
         <input type="text" id="exerciseSearch" placeholder="🔍 Search exercises..." oninput="filterExercises()">
         <select id="exerciseSelect"></select>
         <label id="labelTargetSets">Target Sets:</label>
-        <input type="number" id="targetSets"   placeholder="e.g., 3" min="1">
+        <input type="number" id="targetSets"   placeholder="e.g., 3" min="1" max="10">
         <label id="labelTargetReps">Target Reps:</label>
         <input type="number" id="targetReps"   placeholder="e.g., 10" min="1">
         <label id="labelTargetWeight">Target Weight:</label>
@@ -326,6 +326,7 @@
 const MAX_BATCH       = 7;
 const MAX_ROUTINE_LEN = 1300;  // real worst-case: 15 exercises × ~79 chars + name = ~1216
 const MAX_EXERCISES   = 15;    // mirrors #define MAX_EXERCISES in main.c
+const MAX_SETS        = 10;    // mirrors the 10-entry actual_reps/actual_weight arrays in main.c
 const MAX_HISTORY     = 30;
 
 // Hard cap on the ENCODED config response (the pebblejs://close# payload).
@@ -761,6 +762,15 @@ function addExercise() {
         alert('Please fill out target weight (use 0 for bodyweight)!');
         return;
     }
+    // The watch stores at most MAX_SETS actual values per exercise; Drop Sets
+    // double the set count watch-side, so they max out at MAX_SETS / 2.
+    const effectiveSets = (modifier === 1 ? 2 : 1) * parseInt(sets, 10);
+    if (effectiveSets > MAX_SETS) {
+        alert(modifier === 1
+            ? `Drop Sets double the set count on the watch — maximum ${MAX_SETS / 2} sets for a Drop Set.`
+            : `Maximum of ${MAX_SETS} sets per exercise.`);
+        return;
+    }
     // Enforce the C-side MAX_EXERCISES limit (only on new adds, not edits)
     if (editingIndex === -1 && myRoutine.length >= MAX_EXERCISES) {
         alert(`Maximum of ${MAX_EXERCISES} exercises per routine reached.`);
@@ -1048,21 +1058,27 @@ function sendToPebble(configData) {
     window.location.href = returnTo + encoded;
 }
 
-// True when the editor's routine exactly matches the last copy the watch
-// synced to the phone. If so, only the progression settings need sending
-// (a tiny, always-deliverable payload) instead of the full routine.
-function routineMatchesSyncedCopy(name) {
-    const syncStr = syncedRoutinesDict[name];
-    if (!syncStr) return false;
-
+// Parse a watch sync string ("Name|prog|inc|ex|sets|reps|weight|mod|cmt|...")
+// into { name, exercises, progressionMode, weightIncrement }. The progression
+// header is optional (older strings omit it — progressionMode/weightIncrement
+// come back null). Mirrors parseRoutineString in src/pkjs/index.js.
+function parseSyncString(syncStr) {
     const parts = syncStr.split('|');
-    let startIndex = 1;
-    if (PROGRESSION_TOKENS.has(parts[1])) startIndex = 3;
+    if (parts.length < 2) return null;
 
-    const syncExercises = [];
+    let startIndex = 1;
+    let progressionMode = null;
+    let weightIncrement = null;
+    if (parts.length > 2 && PROGRESSION_TOKENS.has(parts[1])) {
+        progressionMode = parts[1];
+        weightIncrement = parts[2];
+        startIndex = 3;
+    }
+
+    const exercises = [];
     for (let i = startIndex; i < parts.length; i += 6) {
         if (!parts[i] || i + 5 >= parts.length) break;
-        syncExercises.push([
+        exercises.push([
             parts[i],
             parseInt(parts[i+1], 10),
             parseInt(parts[i+2], 10),
@@ -1071,6 +1087,19 @@ function routineMatchesSyncedCopy(name) {
             parts[i+5] === '-' ? '' : parts[i+5]
         ]);
     }
+    return { name: parts[0], exercises, progressionMode, weightIncrement };
+}
+
+// True when the editor's routine exactly matches the last copy the watch
+// synced to the phone. If so, only the progression settings need sending
+// (a tiny, always-deliverable payload) instead of the full routine.
+function routineMatchesSyncedCopy(name) {
+    const syncStr = syncedRoutinesDict[name];
+    if (!syncStr) return false;
+
+    const parsed = parseSyncString(syncStr);
+    if (!parsed) return false;
+    const syncExercises = parsed.exercises;
 
     if (syncExercises.length !== myRoutine.length) return false;
     for (let i = 0; i < myRoutine.length; i++) {
@@ -1351,12 +1380,12 @@ function retroactiveGoogleSync() {
     // 1. Check if the user just typed them into the input fields
     // 2. Fallback to the URL parameters (which the Pebble app passes in if they are stored)
     // 3. Fallback to localStorage as a final safety net
-    const scriptUrl = document.getElementById('googleUrlInput').value.trim() 
-                   || getQueryParam('googleUrl', '').trim() 
+    const scriptUrl = document.getElementById('googleUrlInput').value.trim()
+                   || getQueryParam('googleUrl', '').trim()
                    || Storage.get('googleUrl', '');
-                   
-    const scriptPwd = document.getElementById('googlePwdInput').value.trim() 
-                   || getQueryParam('googlePwd', '').trim() 
+
+    const scriptPwd = document.getElementById('googlePwdInput').value.trim()
+                   || getQueryParam('googlePwd', '').trim()
                    || Storage.get('googlePwd', '');
 
     if (!scriptUrl || !scriptPwd) {
@@ -1373,7 +1402,7 @@ function retroactiveGoogleSync() {
         // Use fetch with 'no-cors' and 'text/plain' to bypass strict browser security rules
         fetch(scriptUrl, {
             method: 'POST',
-            mode: 'no-cors', 
+            mode: 'no-cors',
             headers: {
                 'Content-Type': 'text/plain;charset=utf-8'
             },
@@ -1448,33 +1477,43 @@ window.addEventListener('load', () => {
     try {
         const syncParam = getQueryParam('sync', '{}');
         syncedRoutinesDict = JSON.parse(syncParam);
+
+        // FIX (empty routine list on first open): the page's localStorage can
+        // be empty (fresh phone, cleared webview) while the watch still knows
+        // every routine — it passes them in via the 'sync' URL param. The old
+        // code only consulted sync data for the currently selected routine,
+        // which is none on a fresh page, so the "Saved on Phone" list stayed
+        // empty. Seed any synced routine that has no local copy yet; existing
+        // local copies stay authoritative.
+        const localNames = new Set(getSavedRoutines().map(r => r.name));
+        const lastBeforeSeed = getLastRoutine();
+        let seeded = false;
+        for (const [syncName, syncRoutineStr] of Object.entries(syncedRoutinesDict)) {
+            if (localNames.has(syncName)) continue;
+            const parsedSync = parseSyncString(syncRoutineStr);
+            if (!parsedSync || parsedSync.exercises.length === 0) continue;
+            saveRoutineToStorage(syncName, parsedSync.exercises,
+                parsedSync.progressionMode !== null ? parsedSync.progressionMode : '-1',
+                parsedSync.weightIncrement !== null ? parsedSync.weightIncrement : '2');
+            seeded = true;
+        }
+        if (seeded) {
+            // saveRoutineToStorage moves lastRoutine — restore the user's
+            // previous selection if they had one, then refresh the dropdown.
+            if (lastBeforeSeed) Storage.set('lastRoutine', lastBeforeSeed);
+            loadSavedRoutines();
+        }
+
         const syncedDict = syncedRoutinesDict;
         const activeName = document.getElementById('routineName').value;
         const syncStr = syncedDict[activeName];
         if (!syncStr) return;
 
-        const parts = syncStr.split('|');
-        let startIndex = 1;
-        let syncProgressionMode = null;
-        let syncWeightIncrement = null;
-        if (PROGRESSION_TOKENS.has(parts[1])) {
-            syncProgressionMode = parts[1];
-            syncWeightIncrement = parts[2];
-            startIndex = 3;
-        }
-
-        const syncExercises = [];
-        for (let i = startIndex; i < parts.length; i += 6) {
-            if (!parts[i] || i + 5 >= parts.length) break;
-            syncExercises.push([
-                parts[i],
-                parseInt(parts[i+1], 10),
-                parseInt(parts[i+2], 10),
-                parseInt(parts[i+3], 10),
-                parseInt(parts[i+4], 10),
-                parts[i+5] === '-' ? '' : parts[i+5]
-            ]);
-        }
+        const parsed = parseSyncString(syncStr);
+        if (!parsed) return;
+        const syncExercises        = parsed.exercises;
+        const syncProgressionMode  = parsed.progressionMode;
+        const syncWeightIncrement  = parsed.weightIncrement;
 
         const localRoutine = getSavedRoutines().find(r => r.name === activeName);
         if (!localRoutine) {

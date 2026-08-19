@@ -323,6 +323,8 @@ Pebble.addEventListener('appmessage', function(e) {
 
     var setsMatch   = spokenText.match(/(\d+)\s*sets?/);
     if (setsMatch) sets = parseInt(setsMatch[1], 10);
+    if (sets > 10) sets = 10;  // the watch stores at most 10 sets per exercise
+    if (sets < 1)  sets = 1;
 
     var repsMatch   = spokenText.match(/(\d+)\s*reps?/);
     if (!repsMatch) repsMatch = spokenText.match(/sets? of (\d+)/);
