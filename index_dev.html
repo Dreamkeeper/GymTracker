@@ -260,6 +260,21 @@
     </div>
 
     <div class="card">
+        <h3 style="margin-top:0;">Backup / Restore (JSON File)</h3>
+        <p style="font-size:12px; color:gray; margin-top:0;">Save the routine currently in the editor, or every routine saved on this phone, to a <code>.json</code> file. Import a file to bring routines back — a single routine opens in the editor, a full backup is merged into your saved routines.</p>
+        <div class="flex-row">
+            <button type="button" class="small-btn secondary-btn" style="margin:0; flex:1;" onclick="exportRoutineToFile(false)">💾 Save Current</button>
+            <button type="button" class="small-btn secondary-btn" style="margin:0; flex:1;" onclick="exportAllRoutinesToFile(false)">💾 Save All</button>
+            <button type="button" class="small-btn" style="margin:0; flex:1; background:var(--green);" onclick="document.getElementById('jsonFileInput').click()">📂 Import File</button>
+        </div>
+        <div id="shareRow" class="flex-row" style="display:none; margin-top:8px;">
+            <button type="button" class="small-btn secondary-btn" style="margin:0; flex:1;" onclick="exportRoutineToFile(true)">📤 Share Current</button>
+            <button type="button" class="small-btn secondary-btn" style="margin:0; flex:1;" onclick="exportAllRoutinesToFile(true)">📤 Share All</button>
+        </div>
+        <input type="file" id="jsonFileInput" accept=".json,application/json" style="display:none;" onchange="importFromFile(this)">
+    </div>
+
+    <div class="card">
         <h3 style="margin-top:0;">Import / Export via Text</h3>
         <p style="font-size:12px; color:gray; margin-top:0;">Use this to back up a routine or transfer it from another device. Generate the text on one device, copy it, then paste and import on another.</p>
         <textarea id="routineTextArea" rows="3" style="font-family:monospace; font-size:11px; resize:vertical;" placeholder='{"n":"My Routine","e":[]}'></textarea>
@@ -1237,15 +1252,172 @@ function importFromText() {
     const raw = document.getElementById('routineTextArea').value.trim();
     if (!raw) return;
     try {
-        const data = JSON.parse(raw);
-        if (data.n && Array.isArray(data.e)) {
-            document.getElementById('routineName').value = data.n;
-            myRoutine = data.e.map(ex => { if (ex.length===4) ex.push(0); return migrateLegacyExercise(ex); });
-            renderRoutine();
-            alert('✅ Routine imported successfully!');
+        if (importRoutineData(JSON.parse(raw))) {
             document.getElementById('routineTextArea').value = '';
         }
     } catch { alert('⚠️ Invalid text.'); }
+}
+
+// ============================================================
+// JSON FILE IMPORT / EXPORT
+//
+// File formats (both are plain JSON):
+//   single routine : { format: 'gymtracker-routine',  v: 1, n, e, p, w }
+//   full backup    : { format: 'gymtracker-routines', v: 1, routines: [ {n, e, p, w}, ... ] }
+// n = name, e = exercise arrays (same shape as savedRoutines), p = progression
+// mode, w = weight increment. The text import/export above uses the same
+// {n, e} core, so a text export pastes into a file and vice versa.
+// ============================================================
+const ROUTINE_FILE_FORMAT  = 'gymtracker-routine';
+const ROUTINES_FILE_FORMAT = 'gymtracker-routines';
+
+function routineToExportObject(name, exercises, progressionMode, weightIncrement) {
+    return {
+        n: name,
+        e: exercises,
+        p: progressionMode !== undefined ? String(progressionMode) : '-1',
+        w: weightIncrement  !== undefined ? String(weightIncrement)  : '2'
+    };
+}
+
+function safeFilename(name) {
+    const cleaned = String(name || '').replace(/[^\w\- ]+/g, '_').replace(/^[_\s]+|[_\s]+$/g, '');
+    return cleaned || 'routine';
+}
+
+function downloadJson(filename, obj) {
+    const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function shareJson(filename, obj) {
+    const file = new File([JSON.stringify(obj, null, 2)], filename, { type: 'application/json' });
+    navigator.share({ files: [file], title: filename })
+        .catch(err => { if (err && err.name !== 'AbortError') alert('⚠️ Sharing failed: ' + err.message); });
+}
+
+// Some in-app webviews (e.g. the Pebble app on iOS) ignore <a download>;
+// the native share sheet is a reliable alternative there, so offer it when
+// the browser can share files.
+function canShareFiles() {
+    try {
+        return !!(navigator.canShare &&
+                  navigator.canShare({ files: [new File(['x'], 'x.json', { type: 'application/json' })] }));
+    } catch { return false; }
+}
+
+function deliverJson(filename, obj, share) {
+    if (share) shareJson(filename, obj); else downloadJson(filename, obj);
+}
+
+function exportRoutineToFile(share) {
+    if (myRoutine.length === 0) { alert('Add at least one exercise to the routine first.'); return; }
+    const name = document.getElementById('routineName').value || 'My Routine';
+    const obj  = Object.assign({ format: ROUTINE_FILE_FORMAT, v: 1 },
+        routineToExportObject(name, myRoutine,
+            document.getElementById('progressionMode').value,
+            document.getElementById('weightIncrement').value));
+    deliverJson(safeFilename(name) + '.json', obj, share);
+}
+
+function exportAllRoutinesToFile(share) {
+    const routines = getSavedRoutines();
+    if (routines.length === 0) { alert('No saved routines on this phone yet.'); return; }
+    const obj = {
+        format: ROUTINES_FILE_FORMAT, v: 1,
+        routines: routines.map(r => routineToExportObject(r.name, r.exercises, r.progressionMode, r.weightIncrement))
+    };
+    const date = new Date().toISOString().slice(0, 10);
+    deliverJson(`gymtracker-routines-${date}.json`, obj, share);
+}
+
+function importFromFile(input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+        try { importRoutineData(JSON.parse(reader.result)); }
+        catch { alert('⚠️ Not a valid GymTracker JSON file.'); }
+        input.value = '';
+    };
+    reader.onerror = () => { alert('⚠️ Could not read the file.'); input.value = ''; };
+    reader.readAsText(file);
+}
+
+// Coerce an imported exercise list into the canonical 6-field array shape,
+// dropping anything malformed and enforcing the watch-side limits.
+function normaliseImportedExercises(list) {
+    return list
+        .filter(ex => Array.isArray(ex) && ex.length >= 4 && typeof ex[0] === 'string' && ex[0].trim() !== '')
+        .slice(0, MAX_EXERCISES)
+        .map(ex => migrateLegacyExercise([
+            ex[0].trim(),
+            Math.min(MAX_SETS, Math.max(1, parseInt(ex[1], 10) || 1)),
+            Math.max(0, parseInt(ex[2], 10) || 0),
+            Math.max(0, parseInt(ex[3], 10) || 0),
+            ex.length > 4 ? (parseInt(ex[4], 10) || 0) : 0,
+            ex.length > 5 && ex[5] != null ? String(ex[5]).slice(0, 31) : ''
+        ]));
+}
+
+// Accepts either file format (or the bare {n, e} text format). Returns true
+// when something was imported. Throws on unrecognised input.
+function importRoutineData(data) {
+    if (!data || typeof data !== 'object') throw new Error('not an object');
+
+    // Full backup: merge into saved routines, overwriting same-named ones.
+    if (Array.isArray(data.routines)) {
+        const valid = data.routines.filter(r => r && typeof r.n === 'string' && r.n.trim() && Array.isArray(r.e));
+        if (valid.length === 0) throw new Error('no routines');
+
+        const existing = new Set(getSavedRoutines().map(r => r.name));
+        const clashes  = valid.map(r => r.n.trim()).filter(n => existing.has(n));
+        if (clashes.length > 0 &&
+            !confirm(`This will overwrite ${clashes.length} saved routine(s) with the same name:\n${clashes.join(', ')}\n\nContinue?`)) {
+            return false;
+        }
+
+        let imported = 0;
+        valid.forEach(r => {
+            const exercises = normaliseImportedExercises(r.e);
+            if (exercises.length === 0) return;
+            saveRoutineToStorage(r.n.trim(), exercises,
+                r.p !== undefined ? String(r.p) : '-1',
+                r.w !== undefined ? String(r.w) : '2');
+            imported++;
+        });
+        if (imported === 0) throw new Error('no usable routines');
+
+        loadSavedRoutines();
+        alert(`✅ Imported ${imported} routine(s) into "Saved on Phone". They are stored on this phone only — open one and press "Save & Send" to put it on the watch.`);
+        return true;
+    }
+
+    // Single routine: load into the editor (not yet saved).
+    if (typeof data.n === 'string' && Array.isArray(data.e)) {
+        const exercises = normaliseImportedExercises(data.e);
+        if (data.e.length > MAX_EXERCISES) {
+            alert(`⚠️ Routine has more than ${MAX_EXERCISES} exercises — only the first ${MAX_EXERCISES} were imported.`);
+        }
+        document.getElementById('savedRoutineSelect').value = '';
+        document.getElementById('routineName').value = data.n.trim() || 'My Routine';
+        if (data.p !== undefined) document.getElementById('progressionMode').value = String(data.p);
+        if (data.w !== undefined) document.getElementById('weightIncrement').value = String(data.w);
+        updateProgressionUI();
+        myRoutine = exercises;
+        renderRoutine();
+        document.querySelector('.tab-btn[onclick*="tab-builder"]').click();
+        alert('✅ Routine imported into the editor. Press "Save & Send" to save it and send it to the watch.');
+        return true;
+    }
+
+    throw new Error('unrecognised format');
 }
 
 // ============================================================
@@ -1455,6 +1627,9 @@ window.addEventListener('load', () => {
     document.getElementById('btn-add-batch').style.display   = 'block';
     document.getElementById('btn-send-single').style.display = 'block';
     document.getElementById('btn-send-google').style.display = 'none';
+
+    // Offer the native share sheet for JSON backups where the browser supports it
+    if (canShareFiles()) document.getElementById('shareRow').style.display = 'flex';
 
     // Google status banner
     if (getQueryParam('googleUrl', '').trim()) {
