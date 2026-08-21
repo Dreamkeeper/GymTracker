@@ -260,28 +260,35 @@
     </div>
 
     <div class="card">
-        <h3 style="margin-top:0;">Backup / Restore (JSON File)</h3>
-        <p style="font-size:12px; color:gray; margin-top:0;">Save the routine currently in the editor, or every routine saved on this phone, to a <code>.json</code> file. Import a file to bring routines back — a single routine opens in the editor, a full backup is merged into your saved routines.</p>
-        <div class="flex-row">
-            <button type="button" class="small-btn secondary-btn" style="margin:0; flex:1;" onclick="exportRoutineToFile(false)">💾 Save Current</button>
-            <button type="button" class="small-btn secondary-btn" style="margin:0; flex:1;" onclick="exportAllRoutinesToFile(false)">💾 Save All</button>
-            <button type="button" class="small-btn" style="margin:0; flex:1; background:var(--green);" onclick="document.getElementById('jsonFileInput').click()">📂 Import File</button>
-        </div>
-        <div id="shareRow" class="flex-row" style="display:none; margin-top:8px;">
-            <button type="button" class="small-btn secondary-btn" style="margin:0; flex:1;" onclick="exportRoutineToFile(true)">📤 Share Current</button>
-            <button type="button" class="small-btn secondary-btn" style="margin:0; flex:1;" onclick="exportAllRoutinesToFile(true)">📤 Share All</button>
-        </div>
-        <input type="file" id="jsonFileInput" accept=".json,application/json" style="display:none;" onchange="importFromFile(this)">
-    </div>
+        <h3 style="margin-top:0;">Backup / Restore (JSON)</h3>
+        <p style="font-size:12px; color:gray; margin-top:0;">Back up the routine in the editor, or every routine saved on this phone, as JSON. Restoring a single routine opens it in the editor; restoring a full backup merges it into your saved routines.</p>
 
-    <div class="card">
-        <h3 style="margin-top:0;">Import / Export via Text</h3>
-        <p style="font-size:12px; color:gray; margin-top:0;">Use this to back up a routine or transfer it from another device. Generate the text on one device, copy it, then paste and import on another.</p>
+        <div id="fileBackupRow">
+            <div id="fileButtonsRow" class="flex-row">
+                <button type="button" class="small-btn secondary-btn" style="margin:0; flex:1;" onclick="exportRoutineToFile(false)">💾 Save Current</button>
+                <button type="button" class="small-btn secondary-btn" style="margin:0; flex:1;" onclick="exportAllRoutinesToFile(false)">💾 Save All</button>
+                <button type="button" class="small-btn" style="margin:0; flex:1; background:var(--green);" onclick="document.getElementById('jsonFileInput').click()">📂 Import File</button>
+            </div>
+            <div id="shareRow" class="flex-row" style="display:none; margin-top:8px;">
+                <button type="button" class="small-btn secondary-btn" style="margin:0; flex:1;" onclick="exportRoutineToFile(true)">📤 Share Current</button>
+                <button type="button" class="small-btn secondary-btn" style="margin:0; flex:1;" onclick="exportAllRoutinesToFile(true)">📤 Share All</button>
+            </div>
+            <input type="file" id="jsonFileInput" accept=".json,application/json" style="display:none;" onchange="importFromFile(this)">
+        </div>
+
+        <div id="textBackupHint" class="modifier-desc" style="display:none; margin-top:10px; border-left-color:var(--brand);">
+            The Pebble app's built-in browser cannot save or open files, so backups here work as text: generate, <strong>Copy</strong>, and paste into a note or file. To restore, paste the JSON below and tap <strong>Import Text</strong>.
+        </div>
+
+        <label style="font-size:12px; font-weight:bold; display:block; margin-top:10px;">Backup as text:</label>
         <textarea id="routineTextArea" rows="3" style="font-family:monospace; font-size:11px; resize:vertical;" placeholder='{"n":"My Routine","e":[]}'></textarea>
+        <div class="flex-row" style="margin-bottom:8px;">
+            <button type="button" class="small-btn secondary-btn" style="margin:0; flex:1;" onclick="exportToText(false)">Current → Text</button>
+            <button type="button" class="small-btn secondary-btn" style="margin:0; flex:1;" onclick="exportToText(true)">All → Text</button>
+        </div>
         <div class="flex-row">
-            <button type="button" class="small-btn secondary-btn" style="margin:0; flex:1;" onclick="exportToText()">1. Gen Text</button>
-            <button type="button" class="small-btn secondary-btn" style="margin:0; flex:1;" onclick="copyText()">2. Copy</button>
-            <button type="button" class="small-btn" style="margin:0; flex:1; background:var(--green);" onclick="importFromText()">⬇️ Import</button>
+            <button type="button" class="small-btn secondary-btn" style="margin:0; flex:1;" onclick="copyText()">📋 Copy</button>
+            <button type="button" class="small-btn" style="margin:0; flex:1; background:var(--green);" onclick="importFromText()">⬇️ Import Text</button>
         </div>
     </div>
 </div>
@@ -343,6 +350,11 @@ const MAX_ROUTINE_LEN = 1300;  // real worst-case: 15 exercises × ~79 chars + n
 const MAX_EXERCISES   = 15;    // mirrors #define MAX_EXERCISES in main.c
 const MAX_SETS        = 10;    // mirrors the 10-entry actual_reps/actual_weight arrays in main.c
 const MAX_HISTORY     = 30;
+
+// True when opened from the Pebble app (pkjs always passes the 'sync' param).
+// Its embedded browser cannot download files or open a file picker, so
+// backup/restore falls back to copy-paste text there.
+const IN_PEBBLE_APP   = new URLSearchParams(location.search).has('sync');
 
 // Hard cap on the ENCODED config response (the pebblejs://close# payload).
 // The phone app silently drops responses above a platform limit, so a too-long
@@ -1225,11 +1237,14 @@ function sendBatchToPebble() {
 // ============================================================
 // TEXT IMPORT / EXPORT
 // ============================================================
-function exportToText() {
-    document.getElementById('routineTextArea').value = JSON.stringify({
-        n: document.getElementById('routineName').value || 'My Routine',
-        e: myRoutine
-    });
+// Text and file backups share the same JSON objects (see JSON FILE IMPORT /
+// EXPORT below); text is simply the compact, copy-pasteable form.
+function exportToText(all) {
+    const obj = all ? buildAllExportObject() : buildCurrentExportObject();
+    if (!obj) return;
+    const ta = document.getElementById('routineTextArea');
+    ta.value = JSON.stringify(obj);
+    ta.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 function copyText() {
@@ -1313,26 +1328,48 @@ function canShareFiles() {
 }
 
 function deliverJson(filename, obj, share) {
-    if (share) shareJson(filename, obj); else downloadJson(filename, obj);
+    if (share) { shareJson(filename, obj); return; }
+    if (IN_PEBBLE_APP) {
+        // <a download> is silently ignored by the Pebble app's webview — hand
+        // the JSON over as text instead so it can be copied out.
+        const ta = document.getElementById('routineTextArea');
+        ta.value = JSON.stringify(obj);
+        ta.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+    }
+    downloadJson(filename, obj);
 }
 
-function exportRoutineToFile(share) {
-    if (myRoutine.length === 0) { alert('Add at least one exercise to the routine first.'); return; }
+// Returns the export object for the routine in the editor, or null (after
+// alerting) when there is nothing to export.
+function buildCurrentExportObject() {
+    if (myRoutine.length === 0) { alert('Add at least one exercise to the routine first.'); return null; }
     const name = document.getElementById('routineName').value || 'My Routine';
-    const obj  = Object.assign({ format: ROUTINE_FILE_FORMAT, v: 1 },
+    return Object.assign({ format: ROUTINE_FILE_FORMAT, v: 1 },
         routineToExportObject(name, myRoutine,
             document.getElementById('progressionMode').value,
             document.getElementById('weightIncrement').value));
-    deliverJson(safeFilename(name) + '.json', obj, share);
 }
 
-function exportAllRoutinesToFile(share) {
+// Returns the bundle export object for every saved routine, or null.
+function buildAllExportObject() {
     const routines = getSavedRoutines();
-    if (routines.length === 0) { alert('No saved routines on this phone yet.'); return; }
-    const obj = {
+    if (routines.length === 0) { alert('No saved routines on this phone yet.'); return null; }
+    return {
         format: ROUTINES_FILE_FORMAT, v: 1,
         routines: routines.map(r => routineToExportObject(r.name, r.exercises, r.progressionMode, r.weightIncrement))
     };
+}
+
+function exportRoutineToFile(share) {
+    const obj = buildCurrentExportObject();
+    if (!obj) return;
+    deliverJson(safeFilename(obj.n) + '.json', obj, share);
+}
+
+function exportAllRoutinesToFile(share) {
+    const obj = buildAllExportObject();
+    if (!obj) return;
     const date = new Date().toISOString().slice(0, 10);
     deliverJson(`gymtracker-routines-${date}.json`, obj, share);
 }
@@ -1628,7 +1665,13 @@ window.addEventListener('load', () => {
     document.getElementById('btn-send-single').style.display = 'block';
     document.getElementById('btn-send-google').style.display = 'none';
 
-    // Offer the native share sheet for JSON backups where the browser supports it
+    // Backup/restore delivery: inside the Pebble app's webview, downloads and
+    // the file picker do nothing, so hide those buttons and explain the text
+    // route. The native share sheet (where supported) works in both contexts.
+    if (IN_PEBBLE_APP) {
+        document.getElementById('fileButtonsRow').style.display = 'none';
+        document.getElementById('textBackupHint').style.display = 'block';
+    }
     if (canShareFiles()) document.getElementById('shareRow').style.display = 'flex';
 
     // Google status banner
